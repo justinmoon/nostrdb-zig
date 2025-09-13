@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         lib.addIncludePath(b.path("src/override"));  // Our config.h override comes first
     }
     lib.addIncludePath(b.path("nostrdb/src"));
+    lib.addIncludePath(b.path("nostrdb/src/bindings/c"));  // For profile_reader.h
     lib.addIncludePath(b.path("nostrdb/ccan"));
     lib.addIncludePath(b.path("nostrdb/deps/lmdb"));
     lib.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
@@ -35,6 +36,7 @@ pub fn build(b: *std.Build) void {
             "nostrdb/deps/flatcc/src/runtime/refmap.c",
             "nostrdb/deps/lmdb/mdb.c",
             "nostrdb/deps/lmdb/midl.c",
+            "src/profile_shim.c",  // Profile field accessor shim
         },
         .flags = &.{
             "-Wno-sign-compare",
