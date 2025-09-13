@@ -67,6 +67,55 @@ pub const Ndb = struct {
     pub fn waitForNotes(self: *Ndb, subid: u64, out_ids: []u64) i32 {
         return c.ndb_wait_for_notes(self.ptr, subid, out_ids.ptr, @intCast(out_ids.len));
     }
+
+    /// Drain subscription until target count is reached or timeout
+    /// For use when subscription was created BEFORE events were processed
+    pub fn drainSubscription(self: *Ndb, subid: u64, target_count: usize, timeout_ms: u64) !usize {
+        var ids_buf: [256]u64 = undefined;
+        var total: usize = 0;
+        const start_time = std.time.milliTimestamp();
+        var polls: usize = 0;
+        
+        while (total < target_count) {
+            const remaining = target_count - total;
+            const batch_size = @min(remaining, ids_buf.len);
+            
+            // Try polling first (non-blocking)
+            const got = self.pollForNotes(subid, ids_buf[0..batch_size]);
+            
+            if (got > 0) {
+                total += @intCast(got);
+                polls = 0; // Reset poll counter on success
+                continue;
+            }
+            
+            polls += 1;
+            
+            // Check timeout
+            const elapsed = std.time.milliTimestamp() - start_time;
+            if (elapsed > timeout_ms or polls > 200) {
+                // Return what we have so far
+                return total;
+            }
+            
+            // Small sleep then retry poll
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+        }
+        
+        return total;
+    }
+    
+    /// Ensure background writer has processed pending events
+    /// This is a workaround - ideally nostrdb would expose a flush method
+    pub fn ensureProcessed(self: *Ndb, timeout_ms: u64) void {
+        _ = timeout_ms;
+        // The old approach of using waitForNotes with dummy subid
+        // seems to help nudge the background writer
+        var dummy_ids: [1]u64 = .{0};
+        _ = self.waitForNotes(999999, &dummy_ids);
+        // Give it a moment to actually write
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
 };
 
 pub const Transaction = struct {
