@@ -1,7 +1,12 @@
 const std = @import("std");
 const xev = @import("xev");
 const ndb = @import("ndb.zig");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
+const builtin = @import("builtin");
+
+// Platform detection for optimization
+const is_linux = builtin.os.tag == .linux;
+const is_macos = builtin.os.tag == .macos;
 
 /// Subscription context for timer callbacks
 pub const SubscriptionContext = struct {
@@ -20,7 +25,7 @@ pub const SubscriptionContext = struct {
         ctx.* = .{
             .ndb = db,
             .sub_id = sub_id,
-            .buffer = std.ArrayList(u64).initCapacity(allocator, 256) catch return error.OutOfMemory,
+            .buffer = try std.ArrayList(u64).initCapacity(allocator, 256),
             .allocator = allocator,
             .on_notes = null,
             .active = true,
@@ -49,60 +54,17 @@ pub const SubscriptionContext = struct {
     }
 };
 
-/// Timer-based subscription poller
-pub fn pollSubscription(
-    userdata: ?*SubscriptionContext,
-    loop: *xev.Loop,
-    comp: *xev.Completion,
-    result: xev.Timer.RunError!void,
-) xev.CallbackAction {
-    _ = result catch |err| {
-        std.log.err("Timer error: {}", .{err});
-        return .disarm;
-    };
-
-    const ctx = userdata orelse return .disarm;
-    if (!ctx.active) return .disarm;
-
-    // Poll for notes
-    var notes_buf: [256]u64 = undefined;
-    const count = ctx.ndb.pollForNotes(ctx.sub_id, &notes_buf);
-
-    if (count > 0) {
-        const notes = notes_buf[0..@intCast(count)];
-
-        // Buffer the notes
-        ctx.buffer.appendSlice(ctx.allocator, notes) catch |err| {
-            std.log.err("Failed to buffer notes: {}", .{err});
-            return .disarm;
-        };
-
-        // Call callback if provided
-        if (ctx.on_notes) |callback| {
-            callback(notes);
-        }
-
-        // Found notes, adjust polling
-        ctx.adjustPollingInterval(true);
-    } else {
-        // No notes, back off
-        ctx.adjustPollingInterval(false);
-    }
-
-    // Rearm timer for next poll
-    const timer = xev.Timer.init() catch return .disarm;
-    timer.run(loop, comp, ctx.poll_interval_ms, SubscriptionContext, ctx, pollSubscription);
-
-    return .rearm;
-}
-
-/// Event-driven subscription stream
+/// Event-driven subscription stream with platform optimizations
 pub const SubscriptionStream = struct {
     allocator: std.mem.Allocator,
     loop: *xev.Loop,
     ctx: *SubscriptionContext,
     timer: xev.Timer,
-    completion: xev.Completion,
+    
+    // Platform-specific: macOS needs alternating completions
+    // Linux can potentially reuse a single completion
+    completions: if (is_macos) [2]xev.Completion else [1]xev.Completion,
+    current_completion: usize,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -113,13 +75,21 @@ pub const SubscriptionStream = struct {
         const ctx = try SubscriptionContext.init(allocator, db, sub_id);
         const timer = try xev.Timer.init();
 
-        return .{
+        var stream = SubscriptionStream{
             .allocator = allocator,
             .loop = loop,
             .ctx = ctx,
             .timer = timer,
-            .completion = .{},
+            .completions = undefined,
+            .current_completion = 0,
         };
+        
+        // Initialize completions
+        for (&stream.completions) |*comp| {
+            comp.* = .{};
+        }
+        
+        return stream;
     }
 
     pub fn deinit(self: *SubscriptionStream) void {
@@ -132,14 +102,90 @@ pub const SubscriptionStream = struct {
 
     /// Start the subscription polling
     pub fn start(self: *SubscriptionStream) void {
+        self.scheduleNextPoll();
+    }
+    
+    /// Schedule the next poll with platform-appropriate completion handling
+    fn scheduleNextPoll(self: *SubscriptionStream) void {
+        const comp = &self.completions[self.current_completion];
+        
         self.timer.run(
             self.loop,
-            &self.completion,
+            comp,
             self.ctx.poll_interval_ms,
-            SubscriptionContext,
-            self.ctx,
-            pollSubscription,
+            SubscriptionStream,
+            self,
+            pollCallback,
         );
+    }
+
+    /// Timer callback for polling
+    fn pollCallback(
+        userdata: ?*SubscriptionStream,
+        loop: *xev.Loop,
+        comp: *xev.Completion,
+        result: xev.Timer.RunError!void,
+    ) xev.CallbackAction {
+        _ = loop;
+        _ = comp;
+        _ = result catch |err| {
+            std.log.err("Timer error: {}", .{err});
+            return .disarm;
+        };
+
+        const stream = userdata orelse return .disarm;
+        if (!stream.ctx.active) return .disarm;
+
+        // Poll for notes
+        var notes_buf: [256]u64 = undefined;
+        const count = stream.ctx.ndb.pollForNotes(stream.ctx.sub_id, &notes_buf);
+
+        if (count > 0) {
+            const notes = notes_buf[0..@intCast(count)];
+
+            // Buffer the notes
+            stream.ctx.buffer.appendSlice(stream.ctx.allocator, notes) catch |err| {
+                std.log.err("Failed to buffer notes: {}", .{err});
+                return .disarm;
+            };
+
+            // Call callback if provided
+            if (stream.ctx.on_notes) |callback| {
+                callback(notes);
+            }
+
+            // Found notes, adjust polling
+            stream.ctx.adjustPollingInterval(true);
+        } else {
+            // No notes, back off
+            stream.ctx.adjustPollingInterval(false);
+        }
+
+        // Check if we should continue
+        if (!stream.ctx.active) {
+            return .disarm;
+        }
+
+        // Platform-specific completion handling
+        if (is_macos) {
+            // macOS: Must alternate between completions
+            stream.current_completion = 1 - stream.current_completion;
+            stream.scheduleNextPoll();
+            return .disarm; // Critical: disarm on macOS, not rearm
+        } else {
+            // Linux: Try to rearm directly (io_uring should handle this)
+            // If this fails on Linux, fall back to macOS pattern
+            const new_timer = xev.Timer.init() catch return .disarm;
+            new_timer.run(
+                stream.loop,
+                &stream.completions[0],
+                stream.ctx.poll_interval_ms,
+                SubscriptionStream,
+                stream,
+                pollCallback,
+            );
+            return .rearm;
+        }
     }
 
     /// Get buffered notes (non-blocking)
@@ -179,21 +225,9 @@ pub const SubscriptionStream = struct {
     /// Cancel the subscription
     pub fn cancel(self: *SubscriptionStream) void {
         self.ctx.active = false;
-
-        // Cancel timer
-        var cancel_c: xev.Completion = .{};
-        self.timer.cancel(
-            self.loop,
-            &self.completion,
-            &cancel_c,
-            void,
-            null,
-            struct {
-                fn cb(_: ?*void, _: *xev.Loop, _: *xev.Completion, _: xev.Timer.CancelError!void) xev.CallbackAction {
-                    return .disarm;
-                }
-            }.cb,
-        );
+        
+        // Note: Timer cancellation can be tricky on different platforms
+        // For now, just mark as inactive and let it disarm naturally
     }
 };
 
@@ -242,4 +276,24 @@ pub fn drainSubscriptionXev(
     const notes = try waitForNotesXev(allocator, db, sub_id, target_count, timeout_ms);
     defer allocator.free(notes);
     return notes.len;
+}
+
+/// Simple synchronous helper for tests that don't need async
+pub fn waitForNotesSync(
+    db: *ndb.Ndb,
+    sub_id: u64,
+    timeout_ms: u64,
+) !u64 {
+    const start = std.time.milliTimestamp();
+    var notes_buf: [256]u64 = undefined;
+    
+    while (std.time.milliTimestamp() - start < timeout_ms) {
+        const count = db.pollForNotes(sub_id, &notes_buf);
+        if (count > 0) {
+            return notes_buf[0];
+        }
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    
+    return error.Timeout;
 }
