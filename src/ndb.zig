@@ -5,6 +5,7 @@ pub const Error = error{
     InitFailed,
     ProcessFailed,
     QueryFailed,
+    AllocatorRequired,
 };
 
 pub const Config = struct {
@@ -314,16 +315,45 @@ pub const QueryResult = struct {
 };
 
 pub fn query(txn: *Transaction, filters: []Filter, results_out: []QueryResult) !usize {
-    var count: c_int = 0;
-    // FIXME: avoid using global page_allocator here; thread/arena-owned
-    // allocator should be plumbed through the API for predictable lifetimes.
-    var c_results: []c.struct_ndb_query_result = try std.heap.page_allocator.alloc(c.struct_ndb_query_result, results_out.len);
-    defer std.heap.page_allocator.free(c_results);
+    return queryWithAllocator(txn, filters, results_out, null);
+}
 
-    // FIXME: same as above; these copies are transient and could be avoided
-    // by passing C-side filters directly or allocating on the caller's arena.
-    var tmp_filters: []c.struct_ndb_filter = try std.heap.page_allocator.alloc(c.struct_ndb_filter, filters.len);
-    defer std.heap.page_allocator.free(tmp_filters);
+/// Query with optional allocator for large result sets
+/// For small queries (<=64 results, <=8 filters), uses stack allocation
+/// For larger queries, requires an allocator to be passed
+pub fn queryWithAllocator(txn: *Transaction, filters: []Filter, results_out: []QueryResult, allocator: ?std.mem.Allocator) !usize {
+    var count: c_int = 0;
+    
+    // Stack allocation for common cases
+    const MAX_STACK_RESULTS = 64;
+    const MAX_STACK_FILTERS = 8;
+    
+    // Handle results allocation
+    var stack_results: [MAX_STACK_RESULTS]c.struct_ndb_query_result = undefined;
+    var heap_results: ?[]c.struct_ndb_query_result = null;
+    defer if (heap_results) |h| allocator.?.free(h);
+    
+    const c_results = if (results_out.len <= MAX_STACK_RESULTS)
+        stack_results[0..results_out.len]
+    else blk: {
+        if (allocator == null) return Error.AllocatorRequired;
+        heap_results = try allocator.?.alloc(c.struct_ndb_query_result, results_out.len);
+        break :blk heap_results.?;
+    };
+    
+    // Handle filters allocation
+    var stack_filters: [MAX_STACK_FILTERS]c.struct_ndb_filter = undefined;
+    var heap_filters: ?[]c.struct_ndb_filter = null;
+    defer if (heap_filters) |h| allocator.?.free(h);
+    
+    const tmp_filters = if (filters.len <= MAX_STACK_FILTERS)
+        stack_filters[0..filters.len]
+    else blk: {
+        if (allocator == null) return Error.AllocatorRequired;
+        heap_filters = try allocator.?.alloc(c.struct_ndb_filter, filters.len);
+        break :blk heap_filters.?;
+    };
+    
     for (filters, 0..) |f, i| tmp_filters[i] = f.inner;
 
     const ok = c.ndb_query(&txn.inner, &tmp_filters[0], @intCast(tmp_filters.len), &c_results[0], @intCast(c_results.len), &count);

@@ -165,6 +165,48 @@ test "Test 6: query_works" {
     try std.testing.expect(match2);
 }
 
+test "Test 6b: query with large result set uses allocator" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    // Small query - should use stack allocation
+    var txn = try ndb.Transaction.begin(&db);
+    defer txn.end();
+
+    var f_small = try ndb.Filter.init();
+    defer f_small.deinit();
+    try f_small.kinds(&.{1});
+    
+    var small_results: [10]ndb.QueryResult = undefined;
+    var small_filters = [_]ndb.Filter{f_small};
+    
+    // This should work without allocator (uses stack)
+    const n_small = try ndb.query(&txn, small_filters[0..], small_results[0..]);
+    try std.testing.expectEqual(@as(usize, 0), n_small); // No events yet
+
+    // Large query - requires allocator
+    var f_large = try ndb.Filter.init();
+    defer f_large.deinit();
+    try f_large.kinds(&.{1});
+    
+    var large_results: [100]ndb.QueryResult = undefined;
+    var large_filters = [_]ndb.Filter{f_large};
+    
+    // This should still work as 100 > 64 but we pass the allocator
+    const n_large = try ndb.queryWithAllocator(&txn, large_filters[0..], large_results[0..], alloc);
+    try std.testing.expectEqual(@as(usize, 0), n_large);
+}
+
 // Phase 2: Extended Filter Tests
 
 test "Test 7: filter_limit_iter_works" {
