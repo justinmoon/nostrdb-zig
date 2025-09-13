@@ -1,0 +1,14 @@
+.{
+    .name = .libxev_demo,
+    .version = "0.0.1",
+    .fingerprint = 0x582b6c96ec68ea49,
+    .dependencies = .{
+        .libxev = .{
+            .url = "https://github.com/zen-eth/libxev/archive/refs/heads/0.15.1.tar.gz",
+            .hash = "122043cc2f29f16a0997820f8640463628c3ca9a4815a93113368b6dc726da7a4585",
+        },
+    },
+    .paths = .{
+        "",
+    },
+}
