@@ -95,6 +95,14 @@ pub const Note = struct {
         const s = c.ndb_note_content(self.ptr);
         return std.mem.span(s);
     }
+
+    pub fn json(self: Note, allocator: std.mem.Allocator) ![]u8 {
+        // Serialize to a temporary fixed buffer, then copy into allocator-owned slice.
+        var buf: [4096]u8 = undefined;
+        const written = c.ndb_note_json(self.ptr, &buf, buf.len);
+        if (written <= 0) return Error.QueryFailed;
+        return allocator.dupe(u8, buf[0..@intCast(written)]);
+    }
 };
 
 pub const NoteKey = u64;
@@ -293,11 +301,14 @@ pub const Keypair = struct {
 
 pub const NoteBuilder = struct {
     builder: c.struct_ndb_builder = undefined,
-    buf: []u8,
+    buf: []align(8) u8,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, buf_size: usize) !NoteBuilder {
-        var nb: NoteBuilder = .{ .builder = undefined, .buf = try allocator.alloc(u8, buf_size), .allocator = allocator };
+        // ndb requires 4-byte alignment for internal structures
+        const raw = try allocator.alignedAlloc(u8, @enumFromInt(3), buf_size);
+        const buf_aligned: []align(8) u8 = @alignCast(raw);
+        var nb: NoteBuilder = .{ .builder = undefined, .buf = buf_aligned, .allocator = allocator };
         errdefer allocator.free(nb.buf);
         if (c.ndb_builder_init(&nb.builder, nb.buf.ptr, nb.buf.len) == 0) return Error.QueryFailed;
         return nb;
@@ -336,6 +347,12 @@ pub const NoteBuilder = struct {
         if (c.ndb_builder_finalize(&self.builder, &note_ptr, &keypair.inner) == 0) return Error.QueryFailed;
         return Note{ .ptr = note_ptr.? };
     }
+
+    pub fn finalizeUnsigned(self: *NoteBuilder) !Note {
+        var note_ptr: ?*c.struct_ndb_note = null;
+        if (c.ndb_builder_finalize(&self.builder, &note_ptr, null) == 0) return Error.QueryFailed;
+        return Note{ .ptr = note_ptr.? };
+    }
 };
 
 pub const TagIter = struct {
@@ -372,3 +389,26 @@ pub const BlocksIter = struct {
         return c.ndb_blocks_iterate_next(&self.iter);
     }
 };
+
+pub const BlocksOwner = struct {
+    blocks: *c.struct_ndb_blocks,
+    buf: []u8,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *BlocksOwner) void {
+        c.ndb_blocks_free(self.blocks);
+        self.allocator.free(self.buf);
+    }
+};
+
+pub fn parseContentBlocks(allocator: std.mem.Allocator, content: []const u8) !BlocksOwner {
+    // Provide a scratch buffer and let C parse blocks
+    // 32KB scratch is enough for small tests
+    const buf = try allocator.alloc(u8, 32 * 1024);
+    errdefer allocator.free(buf);
+    var blocks_ptr: ?*c.struct_ndb_blocks = null;
+    if (c.ndb_parse_content(buf.ptr, @intCast(buf.len), @ptrCast(content.ptr), @intCast(content.len), &blocks_ptr) == 0) {
+        return Error.QueryFailed;
+    }
+    return .{ .blocks = blocks_ptr.?, .buf = buf, .allocator = allocator };
+}
