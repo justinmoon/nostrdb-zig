@@ -1,0 +1,189 @@
+const std = @import("std");
+const ndb = @import("ndb.zig");
+
+test "Test 1: ndb_init_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    db.deinit();
+}
+
+test "Test 2: process_event_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    const ev = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
+    try db.processEvent(ev);
+}
+
+test "Test 3: poll_note_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    // Filter: kinds == 1337
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    try f.kinds(&.{1337});
+
+    const subid = db.subscribe(&f, 1);
+    try std.testing.expect(subid != 0);
+
+    const ev = "[\"EVENT\",\"s\",{\"id\": \"3718b368de4d01a021990e6e00dce4bdf860caed21baffd11b214ac498e7562e\",\"pubkey\": \"57c811c86a871081f52ca80e657004fe0376624a978f150073881b6daf0cbf1d\",\"created_at\": 1704300579,\"kind\": 1337,\"tags\": [],\"content\": \"test\",\"sig\": \"061c36d4004d8342495eb22e8e7c2e2b6e1a1c7b4ae6077fef09f9a5322c561b88bada4f63ff05c9508cb29d03f50f71ef3c93c0201dbec440fc32eda87f273b\"}]";
+    try db.processEvent(ev);
+
+    var ids: [1]u64 = .{0};
+    var got: i32 = 0;
+    // Poll loop: allow background writer to index
+    var tries: usize = 0;
+    // FIXME: sleeping + polling is brittle. Replace with a proper
+    // subscription wrapper helper that waits deterministically.
+    while (got == 0 and tries < 20) : (tries += 1) {
+        std.time.sleep(50 * std.time.ns_per_ms);
+        got = db.pollForNotes(subid, &ids);
+    }
+    try std.testing.expectEqual(@as(i32, 1), got);
+    try std.testing.expect(ids[0] != 0);
+}
+
+test "Test 4: transaction lifecycle" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    var txn = try ndb.Transaction.begin(&db);
+    txn.end();
+}
+
+test "Test 5: get note by ID" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    const id_hex = "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930";
+    const ev = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
+    try db.processEvent(ev);
+
+    // Ensure background writer flushed
+    // FIXME: This uses waitForNotes with a dummy subid to nudge the
+    // background writer. Replace with a real subscription or explicit
+    // flush signal once exposed.
+    var ids: [1]u64 = .{0};
+    _ = db.waitForNotes(1, &ids);
+    std.time.sleep(150 * std.time.ns_per_ms);
+
+    var txn = try ndb.Transaction.begin(&db);
+    defer txn.end();
+
+    var id_bytes: [32]u8 = undefined;
+    try ndb.hexTo32(&id_bytes, id_hex);
+    const note_opt = ndb.getNoteById(&txn, &id_bytes);
+    try std.testing.expect(note_opt != null);
+    const note = note_opt.?;
+    try std.testing.expectEqual(@as(u32, 1), note.kind());
+    try std.testing.expect(std.mem.eql(u8, note.content(), "hello"));
+}
+
+test "Test 6: query_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    const ev1 = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
+    const ev2 = "[\"EVENT\",\"s\",{\"id\": \"0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc\",\"pubkey\": \"dfa3fc062f7430dab3d947417fd3c6fb38a7e60f82ffe3387e2679d4c6919b1d\",\"created_at\": 1704404822,\"kind\": 1,\"tags\": [],\"content\": \"hello2\",\"sig\": \"48a0bb9560b89ee2c6b88edcf1cbeeff04f5e1b10d26da8564cac851065f30fa6961ee51f450cefe5e8f4895e301e8ffb2be06a2ff44259684fbd4ea1c885696\"}]";
+
+    try db.processEvent(ev1);
+    try db.processEvent(ev2);
+
+    // Wait for both notes
+    var ids_buf: [4]u64 = .{0} ** 4;
+    var total: usize = 0;
+    var spins: usize = 0;
+    // FIXME: sleeping while waiting for notes is timing-sensitive.
+    // Consider a helper that drains until count is reached with a timeout.
+    while (total < 2 and spins < 40) : (spins += 1) {
+        std.time.sleep(50 * std.time.ns_per_ms);
+        const got = db.waitForNotes(1, ids_buf[total..]) ;
+        if (got > 0) total += @intCast(got);
+    }
+
+    var txn = try ndb.Transaction.begin(&db);
+    defer txn.end();
+
+    // Build filter by IDs
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var id1: [32]u8 = undefined;
+    var id2: [32]u8 = undefined;
+    try ndb.hexTo32(&id1, "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930");
+    try ndb.hexTo32(&id2, "0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc");
+
+    // Use ids() helper to finalize filter
+    try f.ids(&.{ id1, id2 });
+
+    var results: [4]ndb.QueryResult = undefined;
+    var filters = [_]ndb.Filter{f};
+    const n = try ndb.query(&txn, filters[0..], results[0..]);
+    try std.testing.expectEqual(@as(usize, 2), n);
+    // Verify content one of them is hello or hello2
+    const c0 = results[0].note.content();
+    const c1 = results[1].note.content();
+    const match = std.mem.eql(u8, c0, "hello") or std.mem.eql(u8, c0, "hello2");
+    try std.testing.expect(match);
+    const match2 = std.mem.eql(u8, c1, "hello") or std.mem.eql(u8, c1, "hello2");
+    try std.testing.expect(match2);
+}

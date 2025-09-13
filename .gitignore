@@ -1,0 +1,18 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
+# macOS
+.DS_Store
+
+# LMDB environment files created by tests
+data.mdb
+lock.mdb
+
+# C deps build artifacts
+nostrdb/deps/secp256k1/.libs/
+nostrdb/deps/secp256k1/*.o
+nostrdb/deps/lmdb/*.o
+ 
+# local references not tracked
+nostrdb-rs/
