@@ -416,17 +416,6 @@ No copying broken code. No speculative features. Just make the test green, then 
 
 ---
 
-# ⚠️ Known Pitfalls (from zig-search)
-
-1. **Text search crashes** - ndb_text_search has issues, debug carefully
-2. **Sleep requirements** - Background indexing needs delays after writes
-3. **Return values** - C functions return 1 for success, not 0
-4. **Config initialization** - Must zero-init before setting fields
-5. **Platform differences** - Windows needs different handling
-6. **SHA256 alignment** - On strict-alignment platforms, builder signing may trap if the sha256 input pointer is unaligned. Use malloc-backed buffers like nostrdb-rs and, if necessary, compile CCAN sha256 with `HAVE_UNALIGNED_ACCESS=0`.
-
----
-
 # 📝 Success Criteria
 
 **You know you're done when:**

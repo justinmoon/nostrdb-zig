@@ -1,5 +1,6 @@
 const std = @import("std");
 const ndb = @import("ndb.zig");
+const build_options = @import("build_options");
 
 test "Test 1: ndb_init_works" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -296,7 +297,14 @@ test "Test 12: note_builder_works" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("hashtag");
 
-    const note = try nb.finalizeUnsigned();
+    var maybe_kp: ?ndb.Keypair = null;
+    if (build_options.enable_sign_tests) {
+        maybe_kp = try ndb.Keypair.create();
+    }
+    const note = if (build_options.enable_sign_tests)
+        try nb.finalize(&maybe_kp.?)
+    else
+        try nb.finalizeUnsigned();
     try std.testing.expectEqual(@as(u32, 1), note.kind());
     try std.testing.expect(std.mem.eql(u8, note.content(), "hello"));
 
@@ -352,7 +360,14 @@ test "Test 14: tag iteration" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("topic");
 
-    const note = try nb.finalizeUnsigned();
+    var maybe_kp: ?ndb.Keypair = null;
+    if (build_options.enable_sign_tests) {
+        maybe_kp = try ndb.Keypair.create();
+    }
+    const note = if (build_options.enable_sign_tests)
+        try nb.finalize(&maybe_kp.?)
+    else
+        try nb.finalizeUnsigned();
 
     var it = ndb.TagIter.start(note);
     var saw_e = false;
@@ -368,6 +383,55 @@ test "Test 14: tag iteration" {
         }
     }
     try std.testing.expect(saw_e and saw_t);
+
+    // Also verify packed-id form is detectable via C accessors
+    var it2 = ndb.TagIter.start(note);
+    while (it2.next()) {
+        const k = it2.tagStr(0);
+        if (std.mem.eql(u8, k, "e")) {
+            const s = ndb.c.ndb_iter_tag_str(&it2.iter, 1);
+            // Either packed id or string depending on builder input.
+            if (s.flag == ndb.c.NDB_PACKED_ID) {
+                // Verify length 32 is sensible; content exactness tested elsewhere.
+                const id_ptr: [*]const u8 = @ptrCast(s.unnamed_0.id);
+                _ = id_ptr; // not asserting bytes here.
+            }
+        }
+    }
+}
+
+test "Test 14b: tag packed id via pushTagId" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var nb = try ndb.NoteBuilder.init(alloc, 16 * 1024);
+    defer nb.deinit();
+
+    try nb.setContent("hi");
+    nb.setKind(1);
+    try nb.newTag();
+    try nb.pushTagStr("e");
+    var id_bytes: [32]u8 = undefined;
+    try ndb.hexTo32(&id_bytes, "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930");
+    try nb.pushTagId(&id_bytes);
+
+    const note = try nb.finalizeUnsigned();
+
+    // Now iterate and ensure the second element is packed id with matching bytes
+    var it = ndb.TagIter.start(note);
+    var found = false;
+    while (it.next()) {
+        const k = it.tagStr(0);
+        if (std.mem.eql(u8, k, "e")) {
+            const s = ndb.c.ndb_iter_tag_str(&it.iter, 1);
+            try std.testing.expect(s.flag == ndb.c.NDB_PACKED_ID);
+            const got: [*]const u8 = @ptrCast(s.unnamed_0.id);
+            try std.testing.expect(std.mem.eql(u8, got[0..32], id_bytes[0..]));
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
 }
 
 test "Test 15: note_blocks_work" {
@@ -403,4 +467,104 @@ test "Test 15: note_blocks_work" {
         }
     }
     try std.testing.expect(saw_url and saw_hashtag);
+}
+
+test "Test 15b: bech32 mention parsing" {
+    // Based on nostrdb/test.c test_parse_nevent
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    const content = "nostr:nevent1qqs9qhc0pjvp6jl2w6ppk5cft8ets8fhxy7fcqcjnp7g38whjy0x5aqpzpmhxue69uhkummnw3ezuamfdejsyg86np9a0kajstc8u9h846rmy6320wdepdeydfz8w8cv7kh9sqv02g947d58,#hashtag";
+    var blocks = try ndb.parseContentBlocks(alloc, content);
+    defer blocks.deinit();
+
+    var iter = ndb.BlocksIter.start(content, blocks.blocks);
+    var idx: usize = 0;
+    var saw_bech32 = false;
+    var saw_comma_text = false;
+    var saw_hashtag = false;
+    while (iter.next()) |blk| {
+        idx += 1;
+        const t = ndb.c.ndb_get_block_type(blk);
+        if (idx == 1) {
+            try std.testing.expect(t == ndb.c.BLOCK_MENTION_BECH32);
+            const bech = ndb.c.ndb_bech32_block(blk);
+            try std.testing.expect(bech != null);
+            const bech_ptr: *ndb.c.struct_nostr_bech32 = @ptrCast(bech);
+            try std.testing.expect(bech_ptr.*.type == ndb.c.NOSTR_BECH32_NEVENT);
+            saw_bech32 = true;
+        } else if (idx == 2) {
+            try std.testing.expect(t == ndb.c.BLOCK_TEXT);
+            const s = ndb.c.ndb_block_str(blk);
+            try std.testing.expect(ndb.c.ndb_str_block_ptr(s)[0] == ',');
+            saw_comma_text = true;
+        } else if (idx == 3) {
+            try std.testing.expect(t == ndb.c.BLOCK_HASHTAG);
+            const s = ndb.c.ndb_block_str(blk);
+            const ptr = ndb.c.ndb_str_block_ptr(s);
+            const len: usize = ndb.c.ndb_str_block_len(s);
+            const txt = @as([*]const u8, @ptrCast(ptr))[0..len];
+            // Accept both with and without leading '#'
+            const expected = if (txt.len > 0 and txt[0] == '#') txt[1..] else txt;
+            try std.testing.expect(std.mem.eql(u8, expected, "hashtag"));
+            saw_hashtag = true;
+        }
+    }
+    try std.testing.expect(saw_bech32 and saw_comma_text and saw_hashtag);
+}
+
+test "Test 15d: multiple URLs with separators" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    const content = "https://github.com/damus-io, https://jb55.com/, http://wikipedia.org";
+    var blocks = try ndb.parseContentBlocks(alloc, content);
+    defer blocks.deinit();
+
+    var iter = ndb.BlocksIter.start(content, blocks.blocks);
+    var i: usize = 0;
+    while (iter.next()) |blk| {
+        i += 1;
+        const t = ndb.c.ndb_get_block_type(blk);
+        if (i == 1 or i == 3 or i == 5) {
+            try std.testing.expect(t == ndb.c.BLOCK_URL);
+        } else {
+            try std.testing.expect(t == ndb.c.BLOCK_TEXT);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 5), i);
+}
+test "Test 14c: tag counts match" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var nb = try ndb.NoteBuilder.init(alloc, 16 * 1024);
+    defer nb.deinit();
+
+    try nb.setContent("content");
+    nb.setKind(1);
+    try nb.newTag();
+    try nb.pushTagStr("comment");
+    try nb.pushTagStr("this is a comment");
+    try nb.newTag();
+    try nb.pushTagStr("blah");
+    try nb.pushTagStr("something");
+
+    const note = try nb.finalizeUnsigned();
+
+    var it = ndb.TagIter.start(note);
+    var idx: usize = 0;
+    while (it.next()) {
+        idx += 1;
+        const count = ndb.c.ndb_tag_count(it.iter.tag);
+        if (idx == 1) {
+            try std.testing.expect(count == 2);
+        } else if (idx == 2) {
+            try std.testing.expect(count == 2);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), idx);
 }

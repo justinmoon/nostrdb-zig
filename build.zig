@@ -22,7 +22,6 @@ pub fn build(b: *std.Build) void {
             "nostrdb/src/invoice.c",
             "nostrdb/src/nostr_bech32.c",
             "nostrdb/src/content_parser.c",
-            "nostrdb/ccan/ccan/crypto/sha256/sha256.c",
             "nostrdb/src/bolt11/bech32.c",
             "nostrdb/src/block.c",
             "nostrdb/deps/flatcc/src/runtime/json_parser.c",
@@ -38,6 +37,17 @@ pub fn build(b: *std.Build) void {
             "-Wno-misleading-indentation",
             "-Wno-unused-function",
             "-Wno-unused-parameter",
+        },
+    });
+    // Build CCAN sha256 with conservative unaligned handling to avoid traps on strict-alignment targets.
+    lib.addCSourceFiles(.{
+        .files = &.{
+            "nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        },
+        .flags = &.{
+            "-Wno-unused-function",
+            "-Wno-unused-parameter",
+            "-DHAVE_UNALIGNED_ACCESS=0",
         },
     });
 
@@ -110,7 +120,13 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
+    // Build options for tests
+    const enable_sign_tests_opt = b.option(bool, "enable_sign_tests", "Enable signing in NoteBuilder tests (default: false)") orelse false;
+    const test_opts = b.addOptions();
+    test_opts.addOption(bool, "enable_sign_tests", enable_sign_tests_opt);
+
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
+    tests.root_module.addOptions("build_options", test_opts);
 
     // Ensure @cImport("nostrdb.h") resolves for tests
     tests.root_module.addIncludePath(b.path("nostrdb/src"));

@@ -402,13 +402,14 @@ pub const BlocksOwner = struct {
 };
 
 pub fn parseContentBlocks(allocator: std.mem.Allocator, content: []const u8) !BlocksOwner {
-    // Provide a scratch buffer and let C parse blocks
+    // Provide an aligned scratch buffer (use C allocator for safe alignment)
     // 32KB scratch is enough for small tests
-    const buf = try allocator.alloc(u8, 32 * 1024);
-    errdefer allocator.free(buf);
+    _ = allocator;
+    const buf = try std.heap.c_allocator.alignedAlloc(u8, @enumFromInt(3), 32 * 1024);
+    errdefer std.heap.c_allocator.free(buf);
     var blocks_ptr: ?*c.struct_ndb_blocks = null;
     if (c.ndb_parse_content(buf.ptr, @intCast(buf.len), @ptrCast(content.ptr), @intCast(content.len), &blocks_ptr) == 0) {
         return Error.QueryFailed;
     }
-    return .{ .blocks = blocks_ptr.?, .buf = buf, .allocator = allocator };
+    return .{ .blocks = blocks_ptr.?, .buf = buf, .allocator = std.heap.c_allocator };
 }
