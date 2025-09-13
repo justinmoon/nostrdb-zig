@@ -678,6 +678,93 @@ test "ProfileRecord returns TransactionEnded error after transaction ends" {
     try std.testing.expect(handled_name == null);
 }
 
+test "ProfileRecord rejects invalid flatbuffer data" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    // Create various invalid buffers to test validation
+    var txn = try ndb.Transaction.begin(&db);
+    defer txn.end();
+
+    // Test 1: Too small buffer (less than 8 bytes)
+    {
+        var small_buffer: [4]u8 = .{ 0, 0, 0, 0 };
+        var pr = ndb.profile.ProfileRecord{
+            .ptr = &small_buffer,
+            .len = small_buffer.len,
+            .primary_key = ndb.profile.ProfileKey.new(0),
+            .txn = &txn,
+        };
+        try std.testing.expect(!pr.isValid());
+        // Since we don't auto-validate in getProfile, accessing invalid data
+        // would be undefined behavior. The isValid() check is what protects us.
+    }
+
+    // Test 2: Invalid root offset (points beyond buffer)
+    {
+        var bad_offset: [8]u8 = undefined;
+        // Set root offset to 100, but buffer is only 8 bytes
+        std.mem.writeInt(u32, bad_offset[0..4], 100, .little);
+        std.mem.writeInt(u32, bad_offset[4..8], 0, .little);
+        
+        var pr = ndb.profile.ProfileRecord{
+            .ptr = &bad_offset,
+            .len = bad_offset.len,
+            .primary_key = ndb.profile.ProfileKey.new(0),
+            .txn = &txn,
+        };
+        try std.testing.expect(!pr.isValid());
+        // Don't access invalid data - would be undefined behavior
+    }
+
+    // Test 3: Invalid vtable offset (positive instead of negative)
+    {
+        var bad_vtable: [12]u8 = undefined;
+        // Root offset = 4 (points to byte 8)
+        std.mem.writeInt(u32, bad_vtable[0..4], 4, .little);
+        // Padding
+        std.mem.writeInt(u32, bad_vtable[4..8], 0, .little);
+        // Vtable offset (positive = invalid)
+        std.mem.writeInt(i32, bad_vtable[8..12], 10, .little);
+        
+        var pr = ndb.profile.ProfileRecord{
+            .ptr = &bad_vtable,
+            .len = bad_vtable.len,
+            .primary_key = ndb.profile.ProfileKey.new(0),
+            .txn = &txn,
+        };
+        try std.testing.expect(!pr.isValid());
+        // Don't access invalid data - would be undefined behavior
+    }
+
+    // Test 4: Completely random data
+    {
+        var random_data: [100]u8 = undefined;
+        var prng = std.Random.DefaultPrng.init(12345);
+        prng.random().bytes(&random_data);
+        
+        var pr = ndb.profile.ProfileRecord{
+            .ptr = &random_data,
+            .len = random_data.len,
+            .primary_key = ndb.profile.ProfileKey.new(0),
+            .txn = &txn,
+        };
+        // Random data is extremely unlikely to be a valid flatbuffer
+        try std.testing.expect(!pr.isValid());
+        // Don't access invalid data - would be undefined behavior
+    }
+}
+
 test "Test 14c: tag counts match" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();

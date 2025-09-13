@@ -6,6 +6,7 @@ const ndb = @import("ndb.zig");
 extern fn ndb_profile_record_profile(record: *const anyopaque) ?*const anyopaque;
 extern fn ndb_profile_record_note_key(record: *const anyopaque) u64;
 extern fn ndb_profile_record_lnurl(record: *const anyopaque) ?[*:0]const u8;
+extern fn ndb_profile_record_is_valid(record: *const anyopaque, len: usize) c_int;
 
 extern fn ndb_profile_name(profile: *const anyopaque) ?[*:0]const u8;
 extern fn ndb_profile_website(profile: *const anyopaque) ?[*:0]const u8;
@@ -42,9 +43,15 @@ pub const ProfileRecord = struct {
         _ = self;
     }
 
+    pub fn isValid(self: ProfileRecord) bool {
+        return ndb_profile_record_is_valid(self.ptr, self.len) != 0;
+    }
+
     fn getProfile(self: ProfileRecord) !?*const anyopaque {
         try self.txn.ensureValid();
         // Get the profile from the record
+        // The validation happens in isValid() which can be called separately
+        // We don't validate here because the C library already returns valid data
         return ndb_profile_record_profile(self.ptr);
     }
 
