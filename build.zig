@@ -118,6 +118,12 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // Add libxev dependency
+    const xev = b.dependency("libxev", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
 
@@ -132,6 +138,7 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     tests.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     tests.linkLibrary(lib);
+    tests.root_module.addImport("xev", xev.module("xev"));
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");
     }

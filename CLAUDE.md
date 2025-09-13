@@ -1,0 +1,1 @@
+- zig is checked out at ../zig on 0.15.1 tag. searching the source code can help debug zig syntax or standard library issues.

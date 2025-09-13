@@ -9,6 +9,7 @@ pub const Error = error{
     AllocatorRequired,
     NotFound,
     TransactionEnded,
+    UnsubscribeFailed,
 };
 
 pub const Config = struct {
@@ -64,12 +65,32 @@ pub const Ndb = struct {
         return c.ndb_subscribe(self.ptr, &filter.inner, num_filters);
     }
 
+    pub fn unsubscribe(self: *Ndb, subid: u64) !void {
+        const result = c.ndb_unsubscribe(self.ptr, subid);
+        if (result == 0) return Error.UnsubscribeFailed;
+    }
+
     pub fn pollForNotes(self: *Ndb, subid: u64, out_ids: []u64) i32 {
         return c.ndb_poll_for_notes(self.ptr, subid, out_ids.ptr, @intCast(out_ids.len));
     }
 
     pub fn waitForNotes(self: *Ndb, subid: u64, out_ids: []u64) i32 {
         return c.ndb_wait_for_notes(self.ptr, subid, out_ids.ptr, @intCast(out_ids.len));
+    }
+
+    /// Subscribe with async event loop support (libxev)
+    pub fn subscribeAsync(
+        self: *Ndb,
+        allocator: std.mem.Allocator,
+        loop: anytype, // *xev.Loop
+        filter: *Filter,
+        num_filters: i32,
+    ) !@import("subscription_xev.zig").SubscriptionStream {
+        const xev_sub = @import("subscription_xev.zig");
+        const sub_id = self.subscribe(filter, num_filters);
+        var stream = try xev_sub.SubscriptionStream.init(allocator, loop, self, sub_id);
+        stream.start();
+        return stream;
     }
 
     /// Drain subscription until target count is reached or timeout
