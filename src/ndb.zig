@@ -1,11 +1,13 @@
 const std = @import("std");
 pub const c = @import("c.zig").c;
+const profile = @import("profile.zig");
 
 pub const Error = error{
     InitFailed,
     ProcessFailed,
     QueryFailed,
     AllocatorRequired,
+    NotFound,
 };
 
 pub const Config = struct {
@@ -307,6 +309,66 @@ pub fn getNoteById(txn: *Transaction, id: *const [32]u8) ?Note {
     const note_ptr = c.ndb_get_note_by_id(&txn.inner, &id[0], &note_len, &primkey);
     if (note_ptr == null) return null;
     return Note{ .ptr = note_ptr.? };
+}
+
+pub fn getProfileByPubkey(txn: *Transaction, pubkey: *const [32]u8) !profile.ProfileRecord {
+    var len: usize = 0;
+    var primkey: u64 = 0;
+    const profile_ptr = c.ndb_get_profile_by_pubkey(&txn.inner, &pubkey[0], &len, &primkey);
+    if (profile_ptr == null) return Error.NotFound;
+    
+    return profile.ProfileRecord{
+        .ptr = profile_ptr.?,
+        .len = len,
+        .primary_key = profile.ProfileKey.new(primkey),
+        .txn = txn,
+    };
+}
+
+pub const SearchResult = struct {
+    pubkey: [32]u8,
+};
+
+pub fn searchProfile(txn: *Transaction, search_query: []const u8, limit: u32, allocator: std.mem.Allocator) ![]SearchResult {
+    var search: c.struct_ndb_search = .{
+        .key = null,
+        .profile_key = 0,
+        .cursor = null,
+    };
+    
+    // Ensure null-terminated query string
+    const c_query = try allocator.dupeZ(u8, search_query);
+    defer allocator.free(c_query);
+    
+    const success = c.ndb_search_profile(&txn.inner, &search, c_query.ptr);
+    defer c.ndb_search_profile_end(&search);
+    
+    if (success == 0) {
+        return allocator.alloc(SearchResult, 0);
+    }
+    
+    var results = std.ArrayList(SearchResult).initCapacity(allocator, @intCast(limit)) catch return allocator.alloc(SearchResult, 0);
+    defer results.deinit(allocator);
+    
+    // Add first result
+    if (search.key != null) {
+        const key = search.key.?;
+        try results.append(allocator, .{ .pubkey = key.*.id });
+    }
+    
+    // Get additional results up to limit
+    var remaining = limit;
+    while (remaining > 0) : (remaining -= 1) {
+        const next_success = c.ndb_search_profile_next(&search);
+        if (next_success == 0) break;
+        
+        if (search.key != null) {
+            const key = search.key.?;
+            try results.append(allocator, .{ .pubkey = key.*.id });
+        }
+    }
+    
+    return try results.toOwnedSlice(allocator);
 }
 
 pub const QueryResult = struct {

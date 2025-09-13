@@ -383,16 +383,16 @@ No copying broken code. No speculative features. Just make the test green, then 
 
 ## MVP Checklist (Tests 1-6)
 - [x] Test 1: Database opens and closes
-- [ ] Test 2: Events can be ingested
-- [ ] Test 3: Subscriptions and polling work
-- [ ] Test 4: Transactions work
-- [ ] Test 5: Direct note retrieval works
-- [ ] Test 6: Query system works
+- [x] Test 2: Events can be ingested
+- [x] Test 3: Subscriptions and polling work
+- [x] Test 4: Transactions work
+- [x] Test 5: Direct note retrieval works
+- [x] Test 6: Query system works
 
 ## Extended Features (Tests 7-28)
-- [ ] Tests 7-11: Advanced filters
-- [ ] Tests 12-15: Note management
-- [ ] Tests 16-17: Profiles
+- [x] Tests 7-11: Advanced filters
+- [x] Tests 12-15: Note management
+- [x] Tests 16-17: Profiles
 - [ ] Tests 18-22: Async subscriptions
 - [ ] Tests 23-28: Advanced features
 
