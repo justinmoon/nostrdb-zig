@@ -301,21 +301,21 @@ pub const Keypair = struct {
 
 pub const NoteBuilder = struct {
     builder: c.struct_ndb_builder = undefined,
-    buf: []align(8) u8,
-    allocator: std.mem.Allocator,
+    buf: []u8,
 
     pub fn init(allocator: std.mem.Allocator, buf_size: usize) !NoteBuilder {
-        // ndb requires 4-byte alignment for internal structures
-        const raw = try allocator.alignedAlloc(u8, @enumFromInt(3), buf_size);
-        const buf_aligned: []align(8) u8 = @alignCast(raw);
-        var nb: NoteBuilder = .{ .builder = undefined, .buf = buf_aligned, .allocator = allocator };
-        errdefer allocator.free(nb.buf);
+        // Use C allocator (malloc/free) to mirror nostrdb-rs behavior and C expectations.
+        // FIXME: allocator parameter is ignored; kept for API symmetry.
+        _ = allocator;
+        var nb: NoteBuilder = .{ .builder = undefined, .buf = try std.heap.c_allocator.alloc(u8, buf_size) };
+        errdefer std.heap.c_allocator.free(nb.buf);
         if (c.ndb_builder_init(&nb.builder, nb.buf.ptr, nb.buf.len) == 0) return Error.QueryFailed;
         return nb;
     }
 
     pub fn deinit(self: *NoteBuilder) void {
-        self.allocator.free(self.buf);
+        // Always free with c_allocator.
+        std.heap.c_allocator.free(self.buf);
     }
 
     pub fn setContent(self: *NoteBuilder, content: []const u8) !void {

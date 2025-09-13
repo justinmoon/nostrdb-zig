@@ -41,6 +41,8 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // CCAN sha256 compiled with default config (from nostrdb/src/config.h)
+
     // Non-Windows-only bolt11 deps (we mirror build.rs behavior)
     if (target.result.os.tag != .windows) {
         lib.addCSourceFiles(.{
@@ -84,6 +86,12 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_ECDH", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
+
+    // On architectures with strict alignment (e.g., aarch64/macOS),
+    // force CCAN's sha256 to avoid unaligned reads.
+    if (target.result.cpu.arch == .aarch64) {
+        lib.root_module.addCMacro("HAVE_UNALIGNED_ACCESS", "0");
+    }
 
     // Debug flags similar to build.rs
     switch (optimize) {

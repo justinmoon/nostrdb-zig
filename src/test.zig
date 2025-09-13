@@ -296,7 +296,6 @@ test "Test 12: note_builder_works" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("hashtag");
 
-    // FIXME: finalize without signing to avoid C alignment hazards in sha256 path.
     const note = try nb.finalizeUnsigned();
     try std.testing.expectEqual(@as(u32, 1), note.kind());
     try std.testing.expect(std.mem.eql(u8, note.content(), "hello"));
@@ -353,7 +352,6 @@ test "Test 14: tag iteration" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("topic");
 
-    // FIXME: finalize without signing to avoid C alignment hazards in sha256 path.
     const note = try nb.finalizeUnsigned();
 
     var it = ndb.TagIter.start(note);
