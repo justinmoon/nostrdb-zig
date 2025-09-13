@@ -196,6 +196,14 @@ No copying broken code. No speculative features. Just make the test green, then 
 - Requires secp256k1 integration
 - This is complex - consider deferring if not needed
 
+### NoteBuilder Signing – Implementation Notes
+- nostrdb-rs signs successfully by allocating the builder buffer with `libc::malloc` and passing it to `ndb_builder_init`, then creating a keypair via `ndb_create_keypair` and calling `ndb_builder_finalize(builder, &note, keypair_ptr)`.
+- When mirroring this in Zig, prefer `std.heap.c_allocator` (malloc/free) for the builder buffer to match the C/Rust usage and avoid allocator/alignment surprises.
+- CCAN sha256 has an unaligned fast path. On some macOS/aarch64 toolchains, feeding an unaligned scratch pointer can trap on 32-bit loads. If encountered:
+  - First, ensure the builder buffer uses `malloc` and that we pass it directly to `ndb_builder_init`.
+  - If a trap still occurs in your env, compile CCAN sha256 with `HAVE_UNALIGNED_ACCESS=0` (per-file) to force the safe copy path.
+- Keep an unsigned finalize path (`finalizeUnsigned`) available only as a temporary workaround during porting; the target is to sign like nostrdb-rs.
+
 ---
 
 ## Test 13: `note_query_works`
@@ -415,6 +423,7 @@ No copying broken code. No speculative features. Just make the test green, then 
 3. **Return values** - C functions return 1 for success, not 0
 4. **Config initialization** - Must zero-init before setting fields
 5. **Platform differences** - Windows needs different handling
+6. **SHA256 alignment** - On strict-alignment platforms, builder signing may trap if the sha256 input pointer is unaligned. Use malloc-backed buffers like nostrdb-rs and, if necessary, compile CCAN sha256 with `HAVE_UNALIGNED_ACCESS=0`.
 
 ---
 
