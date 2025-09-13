@@ -329,46 +329,14 @@ pub const SearchResult = struct {
     pubkey: [32]u8,
 };
 
+// Export search types for direct use
+const search_mod = @import("search.zig");
+pub const ProfileSearchIterator = search_mod.ProfileSearchIterator;
+pub const SearchWindow = search_mod.SearchWindow;
+
 pub fn searchProfile(txn: *Transaction, search_query: []const u8, limit: u32, allocator: std.mem.Allocator) ![]SearchResult {
-    var search: c.struct_ndb_search = .{
-        .key = null,
-        .profile_key = 0,
-        .cursor = null,
-    };
-    
-    // Ensure null-terminated query string
-    const c_query = try allocator.dupeZ(u8, search_query);
-    defer allocator.free(c_query);
-    
-    const success = c.ndb_search_profile(&txn.inner, &search, c_query.ptr);
-    defer c.ndb_search_profile_end(&search);
-    
-    if (success == 0) {
-        return allocator.alloc(SearchResult, 0);
-    }
-    
-    var results = std.ArrayList(SearchResult).initCapacity(allocator, @intCast(limit)) catch return allocator.alloc(SearchResult, 0);
-    defer results.deinit(allocator);
-    
-    // Add first result
-    if (search.key != null) {
-        const key = search.key.?;
-        try results.append(allocator, .{ .pubkey = key.*.id });
-    }
-    
-    // Get additional results up to limit
-    var remaining = limit;
-    while (remaining > 0) : (remaining -= 1) {
-        const next_success = c.ndb_search_profile_next(&search);
-        if (next_success == 0) break;
-        
-        if (search.key != null) {
-            const key = search.key.?;
-            try results.append(allocator, .{ .pubkey = key.*.id });
-        }
-    }
-    
-    return try results.toOwnedSlice(allocator);
+    // Use the new iterator-based implementation for better memory efficiency
+    return try search_mod.searchProfileCompat(txn, search_query, limit, allocator);
 }
 
 pub const QueryResult = struct {
