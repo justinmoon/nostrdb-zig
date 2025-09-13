@@ -500,6 +500,17 @@ test "Test 15d: multiple URLs with separators" {
     }
     try std.testing.expectEqual(@as(usize, 5), i);
 }
+
+// TODO: Invoice block parsing test disabled due to bolt11 parsing issues
+// The bolt11 decoder has integer overflow issues causing panics.
+// Invoice blocks are currently parsed as text blocks instead of BLOCK_INVOICE.
+// This needs to be fixed in the nostrdb C code.
+//
+// test "Test 15e: invoice block parsing" {
+//     // Test would verify that lightning invoices (lnbc...) are parsed as BLOCK_INVOICE
+//     // Currently they're incorrectly parsed as BLOCK_TEXT
+// }
+
 test "Test 14c: tag counts match" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
