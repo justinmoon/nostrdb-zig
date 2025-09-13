@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+pub const c = @import("c.zig").c;
 
 pub const Error = error{
     InitFailed,
@@ -132,6 +132,98 @@ pub const Filter = struct {
     }
 };
 
+pub const FilterElements = struct {
+    inner: *c.struct_ndb_filter_elements,
+
+    pub fn fieldType(self: FilterElements) c.enum_ndb_filter_fieldtype {
+        return self.inner.field.type;
+    }
+
+    pub fn count(self: FilterElements) i32 {
+        return self.inner.count;
+    }
+
+    pub fn intAt(self: FilterElements, index: i32) u64 {
+        return c.ndb_filter_get_int_element(self.inner, index);
+    }
+
+    pub fn intPtrAt(self: FilterElements, index: i32) *u64 {
+        return c.ndb_filter_get_int_element_ptr(self.inner, index);
+    }
+
+    pub fn stringAt(self: FilterElements, filter: *Filter, index: i32) []const u8 {
+        const s = c.ndb_filter_get_string_element(&filter.inner, self.inner, index);
+        return std.mem.span(s);
+    }
+};
+
+pub const FilterBuilder = struct {
+    filter: *Filter,
+    built: bool = false,
+
+    pub fn init(filter: *Filter) FilterBuilder {
+        return .{ .filter = filter, .built = false };
+    }
+
+    pub fn kinds(self: *FilterBuilder, kinds_slice: []const u64) !*FilterBuilder {
+        if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_KINDS) == 0) return Error.QueryFailed;
+        for (kinds_slice) |k| if (c.ndb_filter_add_int_element(&self.filter.inner, k) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn limit(self: *FilterBuilder, n: u64) !*FilterBuilder {
+        if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_LIMIT) == 0) return Error.QueryFailed;
+        if (c.ndb_filter_add_int_element(&self.filter.inner, n) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn since(self: *FilterBuilder, ts: u64) !*FilterBuilder {
+        if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_SINCE) == 0) return Error.QueryFailed;
+        if (c.ndb_filter_add_int_element(&self.filter.inner, ts) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn ids(self: *FilterBuilder, id_list: []const [32]u8) !*FilterBuilder {
+        if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_IDS) == 0) return Error.QueryFailed;
+        for (id_list) |id| if (c.ndb_filter_add_id_element(&self.filter.inner, &id[0]) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn event(self: *FilterBuilder, id_list: []const [32]u8) !*FilterBuilder {
+        if (c.ndb_filter_start_tag_field(&self.filter.inner, 'e') == 0) return Error.QueryFailed;
+        for (id_list) |id| if (c.ndb_filter_add_id_element(&self.filter.inner, &id[0]) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn build(self: *FilterBuilder) !void {
+        if (self.built) return;
+        if (c.ndb_filter_end(&self.filter.inner) == 0) return Error.QueryFailed;
+        self.built = true;
+    }
+};
+
+pub fn filterElementsAt(filter: *Filter, index: i32) ?FilterElements {
+    const elems = c.ndb_filter_get_elements(&filter.inner, index);
+    if (elems == null) return null;
+    return FilterElements{ .inner = elems.? };
+}
+
+pub fn findField(filter: *Filter, typ: c.enum_ndb_filter_fieldtype) ?FilterElements {
+    var i: i32 = 0;
+    while (true) : (i += 1) {
+        const opt = c.ndb_filter_get_elements(&filter.inner, i);
+        if (opt == null) break;
+        const ptr = opt.?;
+        if (ptr.*.field.type == typ) return FilterElements{ .inner = ptr };
+    }
+    return null;
+}
+
 pub fn hexTo32(out: *[32]u8, hex_str: []const u8) !void {
     if (hex_str.len != 64) return error.InvalidHex;
     var i: usize = 0;
@@ -188,3 +280,95 @@ pub fn query(txn: *Transaction, filters: []Filter, results_out: []QueryResult) !
     }
     return n;
 }
+
+pub const Keypair = struct {
+    inner: c.struct_ndb_keypair = undefined,
+
+    pub fn create() !Keypair {
+        var kp: Keypair = .{ .inner = undefined };
+        if (c.ndb_create_keypair(&kp.inner) == 0) return Error.QueryFailed;
+        return kp;
+    }
+};
+
+pub const NoteBuilder = struct {
+    builder: c.struct_ndb_builder = undefined,
+    buf: []u8,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, buf_size: usize) !NoteBuilder {
+        var nb: NoteBuilder = .{ .builder = undefined, .buf = try allocator.alloc(u8, buf_size), .allocator = allocator };
+        errdefer allocator.free(nb.buf);
+        if (c.ndb_builder_init(&nb.builder, nb.buf.ptr, nb.buf.len) == 0) return Error.QueryFailed;
+        return nb;
+    }
+
+    pub fn deinit(self: *NoteBuilder) void {
+        self.allocator.free(self.buf);
+    }
+
+    pub fn setContent(self: *NoteBuilder, content: []const u8) !void {
+        if (c.ndb_builder_set_content(&self.builder, @ptrCast(content.ptr), @intCast(content.len)) == 0) return Error.QueryFailed;
+    }
+
+    pub fn setKind(self: *NoteBuilder, kind: u32) void {
+        c.ndb_builder_set_kind(&self.builder, kind);
+    }
+
+    pub fn setCreatedAt(self: *NoteBuilder, ts: u64) void {
+        c.ndb_builder_set_created_at(&self.builder, ts);
+    }
+
+    pub fn newTag(self: *NoteBuilder) !void {
+        if (c.ndb_builder_new_tag(&self.builder) == 0) return Error.QueryFailed;
+    }
+
+    pub fn pushTagStr(self: *NoteBuilder, s: []const u8) !void {
+        if (c.ndb_builder_push_tag_str(&self.builder, @ptrCast(s.ptr), @intCast(s.len)) == 0) return Error.QueryFailed;
+    }
+
+    pub fn pushTagId(self: *NoteBuilder, id: *[32]u8) !void {
+        if (c.ndb_builder_push_tag_id(&self.builder, &id[0]) == 0) return Error.QueryFailed;
+    }
+
+    pub fn finalize(self: *NoteBuilder, keypair: *Keypair) !Note {
+        var note_ptr: ?*c.struct_ndb_note = null;
+        if (c.ndb_builder_finalize(&self.builder, &note_ptr, &keypair.inner) == 0) return Error.QueryFailed;
+        return Note{ .ptr = note_ptr.? };
+    }
+};
+
+pub const TagIter = struct {
+    iter: c.struct_ndb_iterator = .{ .note = undefined, .tag = undefined, .index = 0 },
+
+    pub fn start(note: Note) TagIter {
+        var it: TagIter = .{};
+        c.ndb_tags_iterate_start(note.ptr, &it.iter);
+        return it;
+    }
+
+    pub fn next(self: *TagIter) bool {
+        return c.ndb_tags_iterate_next(&self.iter) != 0;
+    }
+
+    pub fn tagStr(self: *TagIter, idx: i32) []const u8 {
+        const s = c.ndb_iter_tag_str(&self.iter, idx);
+        const len: usize = @intCast(c.ndb_str_len(@constCast(&s)));
+        const ptr = s.unnamed_0.str;
+        return @as([*]const u8, @ptrCast(ptr))[0..len];
+    }
+};
+
+pub const BlocksIter = struct {
+    iter: c.struct_ndb_block_iterator = .{ .content = undefined, .blocks = undefined, .block = undefined, .p = undefined },
+
+    pub fn start(content: []const u8, blocks: *c.struct_ndb_blocks) BlocksIter {
+        var it: BlocksIter = .{};
+        c.ndb_blocks_iterate_start(@ptrCast(content.ptr), blocks, &it.iter);
+        return it;
+    }
+
+    pub fn next(self: *BlocksIter) ?*c.struct_ndb_block {
+        return c.ndb_blocks_iterate_next(&self.iter);
+    }
+};

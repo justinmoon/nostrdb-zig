@@ -5,11 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Build the C library sources from nostrdb at the pinned commit
-    const lib = b.addStaticLibrary(.{
-        .name = "nostrdb_c",
-        .target = target,
-        .optimize = optimize,
-    });
+    const lib = b.addLibrary(.{ .name = "nostrdb_c", .linkage = .static, .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
 
     // Common include paths for all C code
     lib.addIncludePath(b.path("nostrdb/src"));
@@ -106,14 +102,14 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
-    const tests = b.addTest(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize });
+    const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
 
-    // Ensure @cImport("nostrdb.h") resolves
-    tests.addIncludePath(b.path("nostrdb/src"));
-    tests.addIncludePath(b.path("nostrdb/ccan"));
-    tests.addIncludePath(b.path("nostrdb/deps/lmdb"));
-    tests.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
-    tests.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    // Ensure @cImport("nostrdb.h") resolves for tests
+    tests.root_module.addIncludePath(b.path("nostrdb/src"));
+    tests.root_module.addIncludePath(b.path("nostrdb/ccan"));
+    tests.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    tests.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    tests.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     tests.linkLibrary(lib);
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");

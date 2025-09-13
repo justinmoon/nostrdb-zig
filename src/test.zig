@@ -66,7 +66,7 @@ test "Test 3: poll_note_works" {
     // FIXME: sleeping + polling is brittle. Replace with a proper
     // subscription wrapper helper that waits deterministically.
     while (got == 0 and tries < 20) : (tries += 1) {
-        std.time.sleep(50 * std.time.ns_per_ms);
+        std.Thread.sleep(50 * std.time.ns_per_ms);
         got = db.pollForNotes(subid, &ids);
     }
     try std.testing.expectEqual(@as(i32, 1), got);
@@ -115,7 +115,7 @@ test "Test 5: get note by ID" {
     // flush signal once exposed.
     var ids: [1]u64 = .{0};
     _ = db.waitForNotes(1, &ids);
-    std.time.sleep(150 * std.time.ns_per_ms);
+    std.Thread.sleep(150 * std.time.ns_per_ms);
 
     var txn = try ndb.Transaction.begin(&db);
     defer txn.end();
@@ -156,7 +156,7 @@ test "Test 6: query_works" {
     // FIXME: sleeping while waiting for notes is timing-sensitive.
     // Consider a helper that drains until count is reached with a timeout.
     while (total < 2 and spins < 40) : (spins += 1) {
-        std.time.sleep(50 * std.time.ns_per_ms);
+        std.Thread.sleep(50 * std.time.ns_per_ms);
         const got = db.waitForNotes(1, ids_buf[total..]) ;
         if (got > 0) total += @intCast(got);
     }
@@ -186,4 +186,130 @@ test "Test 6: query_works" {
     try std.testing.expect(match);
     const match2 = std.mem.eql(u8, c1, "hello") or std.mem.eql(u8, c1, "hello2");
     try std.testing.expect(match2);
+}
+
+// Phase 2: Extended Filter Tests
+
+test "Test 7: filter_limit_iter_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var b = ndb.FilterBuilder.init(&f);
+    _ = try b.limit(2);
+    try b.build();
+
+    // Iterate fields and verify LIMIT is present and equals 2
+    const elems_opt = ndb.findField(&f, ndb.c.NDB_FILTER_LIMIT);
+    try std.testing.expect(elems_opt != null);
+    const elems = elems_opt.?;
+    try std.testing.expectEqual(@as(i32, 1), elems.count());
+    try std.testing.expectEqual(@as(u64, 2), elems.intAt(0));
+}
+
+test "Test 8: filter_id_iter_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var b = ndb.FilterBuilder.init(&f);
+
+    var id1: [32]u8 = undefined;
+    var id2: [32]u8 = undefined;
+    try ndb.hexTo32(&id1, "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930");
+    try ndb.hexTo32(&id2, "0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc");
+    _ = try b.ids(&.{ id1, id2 });
+    try b.build();
+
+    const elems_opt = ndb.findField(&f, ndb.c.NDB_FILTER_IDS);
+    try std.testing.expect(elems_opt != null);
+    const elems = elems_opt.?;
+    try std.testing.expectEqual(@as(i32, 2), elems.count());
+}
+
+test "Test 9: filter_since_mut_works" {
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var b = ndb.FilterBuilder.init(&f);
+    _ = try b.since(1234);
+    try b.build();
+
+    var elems = (ndb.findField(&f, ndb.c.NDB_FILTER_SINCE)).?;
+    try std.testing.expectEqual(@as(u64, 1234), elems.intAt(0));
+
+    // Mutate since in-place via int pointer
+    const p = elems.intPtrAt(0);
+    p.* = 5678;
+    elems = (ndb.findField(&f, ndb.c.NDB_FILTER_SINCE)).?;
+    try std.testing.expectEqual(@as(u64, 5678), elems.intAt(0));
+}
+
+test "Test 10: filter_int_iter_works" {
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var b = ndb.FilterBuilder.init(&f);
+    _ = try b.kinds(&.{ 1, 2, 3 });
+    try b.build();
+
+    const elems_opt = ndb.findField(&f, ndb.c.NDB_FILTER_KINDS);
+    try std.testing.expect(elems_opt != null);
+    const elems = elems_opt.?;
+    try std.testing.expectEqual(@as(i32, 3), elems.count());
+    try std.testing.expectEqual(@as(u64, 1), elems.intAt(0));
+    try std.testing.expectEqual(@as(u64, 2), elems.intAt(1));
+    try std.testing.expectEqual(@as(u64, 3), elems.intAt(2));
+}
+
+test "Test 11: filter_multiple_field_iter_works" {
+    var f = try ndb.Filter.init();
+    defer f.deinit();
+    var b = ndb.FilterBuilder.init(&f);
+
+    var id1: [32]u8 = undefined;
+    try ndb.hexTo32(&id1, "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930");
+    _ = try b.kinds(&.{ 1 });
+    _ = try b.limit(5);
+    _ = try b.event(&.{ id1 });
+    try b.build();
+
+    // Find kinds, limit, and e-tag fields exist
+    try std.testing.expect(ndb.findField(&f, ndb.c.NDB_FILTER_KINDS) != null);
+    try std.testing.expect(ndb.findField(&f, ndb.c.NDB_FILTER_LIMIT) != null);
+    try std.testing.expect(ndb.findField(&f, ndb.c.NDB_FILTER_TAGS) != null);
+}
+
+// Phase 3: Note Management Tests
+
+test "Test 12: note_builder_works" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var kp = try ndb.Keypair.create();
+    var nb = try ndb.NoteBuilder.init(alloc, 16 * 1024);
+    defer nb.deinit();
+
+    try nb.setContent("hello");
+    nb.setKind(1);
+    nb.setCreatedAt(1700000000);
+    try nb.newTag();
+    try nb.pushTagStr("t");
+    try nb.pushTagStr("hashtag");
+
+    const note = try nb.finalize(&kp);
+    try std.testing.expectEqual(@as(u32, 1), note.kind());
+    try std.testing.expect(std.mem.eql(u8, note.content(), "hello"));
+
+    var it = ndb.TagIter.start(note);
+    var saw_tag = false;
+    while (it.next()) {
+        const k = it.tagStr(0);
+        if (std.mem.eql(u8, k, "t")) {
+            const v = it.tagStr(1);
+            try std.testing.expect(std.mem.eql(u8, v, "hashtag"));
+            saw_tag = true;
+        }
+    }
+    try std.testing.expect(saw_tag);
 }
