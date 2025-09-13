@@ -586,21 +586,96 @@ test "Test 16: profile_record_works" {
     const pr = try ndb.getProfileByPubkeyFree(&txn, &pk);
     
     // Check the profile fields
-    const name = pr.name();
+    const name = try pr.name();
     try std.testing.expect(name != null);
     try std.testing.expectEqualStrings("jb55", name.?);
 
-    const display_name = pr.displayName();
+    const display_name = try pr.displayName();
     try std.testing.expect(display_name != null);
     try std.testing.expectEqualStrings("Will", display_name.?);
 
-    const about = pr.about();
+    const about = try pr.about();
     try std.testing.expect(about != null);
     try std.testing.expect(std.mem.indexOf(u8, about.?, "damus") != null);
 
-    const website = pr.website();
+    const website = try pr.website();
     try std.testing.expect(website != null);
     try std.testing.expectEqualStrings("https://damus.io", website.?);
+}
+
+test "ProfileRecord returns TransactionEnded error after transaction ends" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    var cfg = ndb.Config.initDefault();
+    var db = try ndb.Ndb.init(alloc, dir, &cfg);
+    defer db.deinit();
+
+    // Process a profile event (kind 0)
+    const profile_event = 
+        \\["EVENT","nostril-query",{"content":"{\"nip05\":\"_@jb55.com\",\"website\":\"https://damus.io\",\"name\":\"jb55\",\"about\":\"I made damus, npubs and zaps. banned by apple & the ccp. my notes are not for sale.\",\"lud16\":\"jb55@sendsats.lol\",\"banner\":\"https://nostr.build/i/3d6f22d45d95ecc2c19b1acdec57aa15f2dba9c423b536e26fc62707c125f557.jpg\",\"display_name\":\"Will\",\"picture\":\"https://cdn.jb55.com/img/red-me.jpg\"}","created_at":1700855305,"id":"cad04d11f7fa9c36d57400baca198582dfeb94fa138366c4469e58da9ed60051","kind":0,"pubkey":"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245","sig":"7a15e379ff27318460172b4a1d55a13e064c5007d05d5a188e7f60e244a9ed08996cb7676058b88c7a91ae9488f8edc719bc966cb5bf1eb99be44cdb745f915f","tags":[]}]
+    ;
+    
+    try db.processEvent(profile_event);
+    
+    // Wait for background indexing to complete
+    db.ensureProcessed(200);
+
+    var pk: [32]u8 = undefined;
+    try ndb.hexTo32(&pk, "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245");
+    
+    // Get profile within a transaction
+    var pr: ndb.profile.ProfileRecord = undefined;
+    {
+        var txn = try ndb.Transaction.begin(&db);
+        defer txn.end();
+        
+        pr = try ndb.getProfileByPubkeyFree(&txn, &pk);
+        
+        // Verify we can access the profile while transaction is active
+        const name = try pr.name();
+        try std.testing.expect(name != null);
+        try std.testing.expectEqualStrings("jb55", name.?);
+    }
+    // Transaction is now ended
+    
+    // Trying to access profile data should return TransactionEnded error
+    const name_result = pr.name();
+    try std.testing.expectError(ndb.Error.TransactionEnded, name_result);
+    
+    const display_result = pr.displayName();
+    try std.testing.expectError(ndb.Error.TransactionEnded, display_result);
+    
+    const about_result = pr.about();
+    try std.testing.expectError(ndb.Error.TransactionEnded, about_result);
+    
+    const website_result = pr.website();
+    try std.testing.expectError(ndb.Error.TransactionEnded, website_result);
+    
+    const note_key_result = pr.noteKey();
+    try std.testing.expectError(ndb.Error.TransactionEnded, note_key_result);
+    
+    const reactions_result = pr.reactions();
+    try std.testing.expectError(ndb.Error.TransactionEnded, reactions_result);
+    
+    const donation_result = pr.damusDonation();
+    try std.testing.expectError(ndb.Error.TransactionEnded, donation_result);
+    
+    // Demonstrate proper error handling pattern
+    const handled_name = pr.name() catch |err| switch (err) {
+        ndb.Error.TransactionEnded => blk: {
+            // Log or handle the error appropriately
+            break :blk null;
+        },
+        else => return err,
+    };
+    try std.testing.expect(handled_name == null);
 }
 
 test "Test 14c: tag counts match" {

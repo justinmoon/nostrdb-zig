@@ -42,7 +42,8 @@ pub const ProfileRecord = struct {
         _ = self;
     }
 
-    fn getProfile(self: ProfileRecord) ?*const anyopaque {
+    fn getProfile(self: ProfileRecord) !?*const anyopaque {
+        try self.txn.ensureValid();
         // Get the profile from the record
         return ndb_profile_record_profile(self.ptr);
     }
@@ -54,72 +55,74 @@ pub const ProfileRecord = struct {
         return null;
     }
 
-    pub fn name(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn name(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         const name_ptr = ndb_profile_name(profile);
         return cStringToSlice(name_ptr);
     }
 
-    pub fn displayName(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn displayName(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_display_name(profile));
     }
 
-    pub fn about(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn about(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_about(profile));
     }
 
-    pub fn website(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn website(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_website(profile));
     }
 
-    pub fn picture(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn picture(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_picture(profile));
     }
 
-    pub fn banner(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn banner(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_banner(profile));
     }
 
-    pub fn lud16(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn lud16(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_lud16(profile));
     }
 
-    pub fn nip05(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn nip05(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_nip05(profile));
     }
 
-    pub fn lud06(self: ProfileRecord) ?[]const u8 {
-        const profile = self.getProfile() orelse return null;
+    pub fn lud06(self: ProfileRecord) !?[]const u8 {
+        const profile = (try self.getProfile()) orelse return null;
         return cStringToSlice(ndb_profile_lud06(profile));
     }
 
-    pub fn reactions(self: ProfileRecord) bool {
-        const profile = self.getProfile() orelse return true; // Default is true
+    pub fn reactions(self: ProfileRecord) !bool {
+        const profile = (try self.getProfile()) orelse return true; // Default is true
         return ndb_profile_reactions(profile) != 0;
     }
 
-    pub fn damusDonation(self: ProfileRecord) i32 {
-        const profile = self.getProfile() orelse return 0;
+    pub fn damusDonation(self: ProfileRecord) !i32 {
+        const profile = (try self.getProfile()) orelse return 0;
         return ndb_profile_damus_donation(profile);
     }
 
-    pub fn damusDonationV2(self: ProfileRecord) i32 {
-        const profile = self.getProfile() orelse return 0;
+    pub fn damusDonationV2(self: ProfileRecord) !i32 {
+        const profile = (try self.getProfile()) orelse return 0;
         return ndb_profile_damus_donation_v2(profile);
     }
 
-    pub fn noteKey(self: ProfileRecord) u64 {
+    pub fn noteKey(self: ProfileRecord) !u64 {
+        try self.txn.ensureValid();
         return ndb_profile_record_note_key(self.ptr);
     }
 
-    pub fn lnurl(self: ProfileRecord) ?[]const u8 {
+    pub fn lnurl(self: ProfileRecord) !?[]const u8 {
+        try self.txn.ensureValid();
         return cStringToSlice(ndb_profile_record_lnurl(self.ptr));
     }
 };

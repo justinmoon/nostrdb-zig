@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const c = @import("c.zig").c;
-const profile = @import("profile.zig");
+pub const profile = @import("profile.zig");
 
 pub const Error = error{
     InitFailed,
@@ -8,6 +8,7 @@ pub const Error = error{
     QueryFailed,
     AllocatorRequired,
     NotFound,
+    TransactionEnded,
 };
 
 pub const Config = struct {
@@ -156,16 +157,25 @@ pub const Ndb = struct {
 
 pub const Transaction = struct {
     inner: c.struct_ndb_txn = undefined,
+    is_valid: bool = false,
 
     pub fn begin(ndb: *Ndb) !Transaction {
-        var txn: Transaction = .{ .inner = undefined };
+        var txn: Transaction = .{ 
+            .inner = undefined,
+            .is_valid = true,
+        };
         const ok = c.ndb_begin_query(ndb.ptr, &txn.inner);
         if (ok == 0) return Error.QueryFailed;
         return txn;
     }
 
     pub fn end(self: *Transaction) void {
+        self.is_valid = false;
         _ = c.ndb_end_query(&self.inner);
+    }
+    
+    pub fn ensureValid(self: Transaction) !void {
+        if (!self.is_valid) return Error.TransactionEnded;
     }
 };
 
