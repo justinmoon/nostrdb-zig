@@ -238,6 +238,16 @@ No copying broken code. No speculative features. Just make the test green, then 
 
 ---
 
+## Phase 3 – Remaining Tasks
+
+- Re-enable NoteBuilder signing tests and assert `id/pubkey/sig` like nostrdb-rs.
+  - Keep builder buffer on `c_allocator` (malloc/free), mirroring Rust.
+  - If macOS/aarch64 still traps in CCAN sha256, compile that TU with `HAVE_UNALIGNED_ACCESS=0`, or upstream a small fix to align the scratch pointer before hashing inside `ndb_builder_finalize`.
+- Reinstate mixed bech32 + URL parsing test once alignment issues are handled (cursor writes of `u16` in bech32 path must be naturally aligned).
+- Add invoice block test (BLOCK_INVOICE) after alignment is addressed in content parser path.
+- Replace sleep/poll waits in early tests (3/5/6) with a deterministic subscription draining helper.
+- Tidy allocations in `query()` (avoid page_allocator and transient filter copies by threading an allocator or passing C filters directly).
+
 # Phase 4: Profile Tests (Tests 16-17)
 
 ## Test 16: `profile_record_works`
