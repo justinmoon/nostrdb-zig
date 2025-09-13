@@ -1,6 +1,5 @@
 const std = @import("std");
 const ndb = @import("ndb.zig");
-const build_options = @import("build_options");
 
 test "Test 1: ndb_init_works" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -297,14 +296,8 @@ test "Test 12: note_builder_works" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("hashtag");
 
-    var maybe_kp: ?ndb.Keypair = null;
-    if (build_options.enable_sign_tests) {
-        maybe_kp = try ndb.Keypair.create();
-    }
-    const note = if (build_options.enable_sign_tests)
-        try nb.finalize(&maybe_kp.?)
-    else
-        try nb.finalizeUnsigned();
+    var kp = try ndb.Keypair.create();
+    const note = try nb.finalize(&kp);
     try std.testing.expectEqual(@as(u32, 1), note.kind());
     try std.testing.expect(std.mem.eql(u8, note.content(), "hello"));
 
@@ -360,14 +353,8 @@ test "Test 14: tag iteration" {
     try nb.pushTagStr("t");
     try nb.pushTagStr("topic");
 
-    var maybe_kp: ?ndb.Keypair = null;
-    if (build_options.enable_sign_tests) {
-        maybe_kp = try ndb.Keypair.create();
-    }
-    const note = if (build_options.enable_sign_tests)
-        try nb.finalize(&maybe_kp.?)
-    else
-        try nb.finalizeUnsigned();
+    var kp = try ndb.Keypair.create();
+    const note = try nb.finalize(&kp);
 
     var it = ndb.TagIter.start(note);
     var saw_e = false;

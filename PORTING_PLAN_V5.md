@@ -1,10 +1,5 @@
 # NostrDB Rust to Zig Porting Plan V5 - Pure Test-Driven Development
 
-## Workspace Repos (for reference)
-- zig-search (reference app/tests): `../zig-search`
-- rust bindings repo: `../zig-search/nostrdb-rs/`
-- nostrdb C repo (direct checkout): `../nostrdb`
-
 Note: For this port, use the nostrdb C source exactly as pinned by the rust bindings via a git submodule (see below). Do not mix versions.
 
 ## 🎯 Core Philosophy

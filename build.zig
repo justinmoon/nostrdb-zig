@@ -8,6 +8,10 @@ pub fn build(b: *std.Build) void {
     const lib = b.addLibrary(.{ .name = "nostrdb_c", .linkage = .static, .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
 
     // Common include paths for all C code
+    // On ARM64, add our override directory first to provide a fixed config.h
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        lib.addIncludePath(b.path("src/override"));  // Our config.h override comes first
+    }
     lib.addIncludePath(b.path("nostrdb/src"));
     lib.addIncludePath(b.path("nostrdb/ccan"));
     lib.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -39,7 +43,7 @@ pub fn build(b: *std.Build) void {
             "-Wno-unused-parameter",
         },
     });
-    // Build CCAN sha256 with conservative unaligned handling to avoid traps on strict-alignment targets.
+    // Build CCAN sha256
     lib.addCSourceFiles(.{
         .files = &.{
             "nostrdb/ccan/ccan/crypto/sha256/sha256.c",
@@ -47,7 +51,6 @@ pub fn build(b: *std.Build) void {
         .flags = &.{
             "-Wno-unused-function",
             "-Wno-unused-parameter",
-            "-DHAVE_UNALIGNED_ACCESS=0",
         },
     });
 
@@ -97,12 +100,6 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
 
-    // On architectures with strict alignment (e.g., aarch64/macOS),
-    // force CCAN's sha256 to avoid unaligned reads.
-    if (target.result.cpu.arch == .aarch64) {
-        lib.root_module.addCMacro("HAVE_UNALIGNED_ACCESS", "0");
-    }
-
     // Debug flags similar to build.rs
     switch (optimize) {
         .Debug => {
@@ -120,15 +117,13 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
-    // Build options for tests
-    const enable_sign_tests_opt = b.option(bool, "enable_sign_tests", "Enable signing in NoteBuilder tests (default: false)") orelse false;
-    const test_opts = b.addOptions();
-    test_opts.addOption(bool, "enable_sign_tests", enable_sign_tests_opt);
-
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
-    tests.root_module.addOptions("build_options", test_opts);
 
     // Ensure @cImport("nostrdb.h") resolves for tests
+    // On ARM64, add our override directory first to provide a fixed config.h
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        tests.root_module.addIncludePath(b.path("src/override"));
+    }
     tests.root_module.addIncludePath(b.path("nostrdb/src"));
     tests.root_module.addIncludePath(b.path("nostrdb/ccan"));
     tests.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
