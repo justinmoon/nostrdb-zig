@@ -108,7 +108,7 @@ test "Test 5: get note by ID" {
 
     var txn = try ndb.Transaction.begin(&db);
     defer txn.end();
-    const note_opt = ndb.getNoteById(&txn, &id_bytes);
+    const note_opt = ndb.getNoteByIdFree(&txn, &id_bytes);
     try std.testing.expect(note_opt != null);
     const note = note_opt.?;
     try std.testing.expectEqual(@as(u32, 1), note.kind());
@@ -583,7 +583,7 @@ test "Test 16: profile_record_works" {
 
     var pk: [32]u8 = undefined;
     try ndb.hexTo32(&pk, "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245");
-    const pr = try ndb.getProfileByPubkey(&txn, &pk);
+    const pr = try ndb.getProfileByPubkeyFree(&txn, &pk);
     
     // Check the profile fields
     const name = pr.name();
@@ -687,7 +687,7 @@ test "search_profile_works" {
 
     // Search for "kernel"
     {
-        const results = try ndb.searchProfile(&txn, "kernel", 1, allocator);
+        const results = try ndb.searchProfileFree(&txn, "kernel", 1, allocator);
         defer allocator.free(results);
         
         try std.testing.expect(results.len >= 1);
@@ -702,7 +702,7 @@ test "search_profile_works" {
 
     // Search for "Derek"
     {
-        const results = try ndb.searchProfile(&txn, "Derek", 1, allocator);
+        const results = try ndb.searchProfileFree(&txn, "Derek", 1, allocator);
         defer allocator.free(results);
         
         try std.testing.expect(results.len >= 1);

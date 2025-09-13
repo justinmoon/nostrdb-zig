@@ -119,6 +119,39 @@ pub const Ndb = struct {
         // Give it a moment to actually write
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
+    
+    /// Get a profile by its public key
+    /// Matches Rust API: get_profile_by_pubkey(&self, transaction, pubkey)
+    pub fn getProfileByPubkey(self: *Ndb, txn: *Transaction, pubkey: *const [32]u8) !profile.ProfileRecord {
+        _ = self; // Method is on Ndb for API consistency
+        return getProfileByPubkeyFree(txn, pubkey);
+    }
+    
+    /// Get a note by its ID
+    /// Matches Rust API: get_note_by_id(&self, transaction, id)
+    pub fn getNoteById(self: *Ndb, txn: *Transaction, id: *const [32]u8) ?Note {
+        _ = self; // Method is on Ndb for API consistency
+        return getNoteByIdFree(txn, id);
+    }
+    
+    /// Search for profiles matching the query string
+    /// Returns references to pubkeys that are valid for the transaction lifetime
+    /// This matches the Rust API: search_profile(&self, transaction, search, limit)
+    pub fn searchProfile(self: *Ndb, txn: *Transaction, search: []const u8, limit: u32, allocator: std.mem.Allocator) ![]SearchResult {
+        _ = self; // Method is on Ndb for API consistency with Rust
+        return searchProfileFree(txn, search, limit, allocator);
+    }
+    
+    /// Search for profiles using an iterator (memory efficient)
+    /// Similar to Rust's zero-copy approach but adapted for Zig
+    pub fn searchProfileIter(self: *Ndb, txn: *Transaction, search: []const u8, allocator: std.mem.Allocator) !ProfileSearchIterator {
+        _ = self; // Method is on Ndb for API consistency
+        const c_query = try allocator.dupeZ(u8, search);
+        // Note: caller must manage c_query lifetime
+        var iter = ProfileSearchIterator.init(txn);
+        try iter.start(c_query);
+        return iter;
+    }
 };
 
 pub const Transaction = struct {
@@ -303,7 +336,7 @@ fn fromHexNibble(cu: u8) !u8 {
     };
 }
 
-pub fn getNoteById(txn: *Transaction, id: *const [32]u8) ?Note {
+pub fn getNoteByIdFree(txn: *Transaction, id: *const [32]u8) ?Note {
     var note_len: usize = 0;
     var primkey: u64 = 0;
     const note_ptr = c.ndb_get_note_by_id(&txn.inner, &id[0], &note_len, &primkey);
@@ -311,7 +344,7 @@ pub fn getNoteById(txn: *Transaction, id: *const [32]u8) ?Note {
     return Note{ .ptr = note_ptr.? };
 }
 
-pub fn getProfileByPubkey(txn: *Transaction, pubkey: *const [32]u8) !profile.ProfileRecord {
+pub fn getProfileByPubkeyFree(txn: *Transaction, pubkey: *const [32]u8) !profile.ProfileRecord {
     var len: usize = 0;
     var primkey: u64 = 0;
     const profile_ptr = c.ndb_get_profile_by_pubkey(&txn.inner, &pubkey[0], &len, &primkey);
@@ -334,7 +367,8 @@ const search_mod = @import("search.zig");
 pub const ProfileSearchIterator = search_mod.ProfileSearchIterator;
 pub const SearchWindow = search_mod.SearchWindow;
 
-pub fn searchProfile(txn: *Transaction, search_query: []const u8, limit: u32, allocator: std.mem.Allocator) ![]SearchResult {
+/// Free function for backward compatibility
+pub fn searchProfileFree(txn: *Transaction, search_query: []const u8, limit: u32, allocator: std.mem.Allocator) ![]SearchResult {
     // Use the new iterator-based implementation for better memory efficiency
     return try search_mod.searchProfileCompat(txn, search_query, limit, allocator);
 }
