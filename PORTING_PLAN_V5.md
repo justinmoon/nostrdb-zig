@@ -239,7 +239,6 @@ No copying broken code. No speculative features. Just make the test green, then 
   - Keep builder buffer on `c_allocator` (malloc/free), mirroring Rust.
   - If macOS/aarch64 still traps in CCAN sha256, compile that TU with `HAVE_UNALIGNED_ACCESS=0`, or upstream a small fix to align the scratch pointer before hashing inside `ndb_builder_finalize`.
 - Reinstate mixed bech32 + URL parsing test once alignment issues are handled (cursor writes of `u16` in bech32 path must be naturally aligned).
-- Add invoice block test (BLOCK_INVOICE) after alignment is addressed in content parser path.
 - Replace sleep/poll waits in early tests (3/5/6) with a deterministic subscription draining helper.
 - Tidy allocations in `query()` (avoid page_allocator and transient filter copies by threading an allocator or passing C filters directly).
 
@@ -430,3 +429,13 @@ No copying broken code. No speculative features. Just make the test green, then 
 - Can be used as a library by other Zig projects
 
 The beauty of this approach: After just 6 tests (1 day), you have a working database. Everything else is optional enhancement!
+
+---
+
+## Deferred Tasks
+
+### Invoice Block Parsing
+- Add invoice block test (BLOCK_INVOICE) after bolt11 decoder issues are resolved
+- Currently has integer overflow issues causing panics in the bolt11 C code
+- Invoices are parsed as text blocks for now, which preserves the content
+- Low priority: Zaps/Lightning payments still work, just without structured parsing
