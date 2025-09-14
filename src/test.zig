@@ -6,6 +6,8 @@ test {
     _ = @import("test_phase5.zig");
 }
 
+// Debug tests removed - Event 3 signature issue fixed
+
 test "Test 1: ndb_init_works" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
