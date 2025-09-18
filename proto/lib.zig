@@ -1,6 +1,5 @@
 const std = @import("std");
-const ndb = @import("ndb");
-const c = ndb.c;
+const c = @import("c").c;
 
 pub const DecodeError = error{
     InvalidNpub,
@@ -36,17 +35,18 @@ pub fn decodeNpub(npub: []const u8) DecodeError![32]u8 {
 
     const ok = c.parse_nostr_bech32(&scratch, scratch.len, npub.ptr, npub.len, &parsed);
     if (ok == 0) return DecodeError.InvalidNpub;
-    if (parsed.type != @as(@TypeOf(parsed.type), c.NOSTR_BECH32_NPUB)) return DecodeError.InvalidNpub;
-    if (parsed.unnamed_0.npub.pubkey == null) return DecodeError.InvalidNpub;
+    if (parsed.type != c.NOSTR_BECH32_NPUB) return DecodeError.InvalidNpub;
+    const npub_info = parsed.unnamed_0.npub;
+    if (npub_info.pubkey == null) return DecodeError.InvalidNpub;
 
     var out: [32]u8 = undefined;
-    const src = parsed.unnamed_0.npub.pubkey[0..32];
+    const src = npub_info.pubkey[0..32];
     @memcpy(out[0..], src);
     return out;
 }
 
 pub fn buildContactsFilter(allocator: std.mem.Allocator, opts: ContactsFilterOptions) ![]u8 {
-    var list = std.ArrayList(u8).init(allocator);
+    var list = std.array_list.Managed(u8).init(allocator);
     errdefer list.deinit();
 
     var writer = list.writer();
@@ -61,10 +61,10 @@ pub fn buildContactsFilter(allocator: std.mem.Allocator, opts: ContactsFilterOpt
     return owned;
 }
 
-pub fn buildPostsFilters(allocator: std.mem.Allocator, opts: PostsFilterOptions) (FilterError || error{OutOfMemory})![][:0]const u8 {
+pub fn buildPostsFilters(allocator: std.mem.Allocator, opts: PostsFilterOptions) (FilterError || std.mem.Allocator.Error)![][:0]const u8 {
     if (opts.chunk_size == 0) return FilterError.InvalidChunkSize;
 
-    var filters = std.ArrayList([:0]const u8).init(allocator);
+    var filters = std.array_list.Managed([:0]const u8).init(allocator);
     errdefer {
         for (filters.items) |entry| allocator.free(entry);
         filters.deinit();
@@ -89,8 +89,8 @@ fn buildPostsFilterChunk(
     authors: []const [32]u8,
     limit: u32,
     since: ?u64,
-) ![:0]const u8 {
-    var list = std.ArrayList(u8).init(allocator);
+) std.mem.Allocator.Error![:0]const u8 {
+    var list = std.array_list.Managed(u8).init(allocator);
     errdefer list.deinit();
 
     var writer = list.writer();
@@ -120,8 +120,8 @@ pub fn buildReq(
     allocator: std.mem.Allocator,
     subid: []const u8,
     filters: []const []const u8,
-) ReqBuilderError![]u8 {
-    var list = std.ArrayList(u8).init(allocator);
+) (std.mem.Allocator.Error || ReqBuilderError)![]u8 {
+    var list = std.array_list.Managed(u8).init(allocator);
     errdefer list.deinit();
 
     var writer = list.writer();
@@ -157,6 +157,16 @@ fn trimArrayEnvelope(filter: []const u8) ReqBuilderError![]const u8 {
 
 fn writeHex(writer: anytype, bytes: []const u8) !void {
     var buf: [64]u8 = undefined;
-    const rendered = try std.fmt.bufPrint(&buf, "{s}", .{std.fmt.fmtSliceHexLower(bytes)});
+    const rendered = encodeHexLower(buf[0..], bytes);
     try writer.writeAll(rendered);
+}
+
+fn encodeHexLower(buf: []u8, bytes: []const u8) []const u8 {
+    const charset = "0123456789abcdef";
+    std.debug.assert(buf.len >= bytes.len * 2);
+    for (bytes, 0..) |b, i| {
+        buf[i * 2] = charset[b >> 4];
+        buf[i * 2 + 1] = charset[b & 0x0F];
+    }
+    return buf[0 .. bytes.len * 2];
 }

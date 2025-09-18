@@ -1,5 +1,5 @@
 const std = @import("std");
-const ndb = @import("ndb.zig");
+const ndb = @import("ndb");
 
 // Import Phase 5 tests
 test {
@@ -8,6 +8,7 @@ test {
     _ = @import("contacts_tests");
     _ = @import("timeline_tests");
     _ = @import("ingest_tests");
+    _ = @import("cli_tests");
     _ = @import("test_phase5.zig");
 }
 

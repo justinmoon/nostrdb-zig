@@ -2,7 +2,7 @@ const std = @import("std");
 const ascii = std.ascii;
 const proto = @import("proto");
 const net = @import("net");
-const ndb = @import("../src/ndb.zig");
+const ndb = @import("ndb");
 
 const log = std.log.scoped(.contacts);
 
@@ -52,9 +52,11 @@ pub const Store = struct {
 
     pub fn ensure(self: *Store, npub: ContactKey) !*ContactList {
         if (self.lists.getPtr(npub)) |existing| return existing;
-        var list = ContactList.init(self.allocator);
-        const gop = try self.lists.put(npub, list);
-        return gop.value_ptr;
+        const result = try self.lists.getOrPut(npub);
+        if (!result.found_existing) {
+            result.value_ptr.* = ContactList.init(self.allocator);
+        }
+        return result.value_ptr;
     }
 
     pub fn applyEvent(self: *Store, event: *ContactEvent) StoreError!void {
@@ -94,15 +96,15 @@ pub const ContactEvent = struct {
 pub const Parser = struct {
     allocator: Allocator,
 
-    const StdParseError = std.json.ParseError(std.json.Value);
     const ExtraParseError = error{
         UnexpectedRoot,
         MissingField,
         InvalidType,
         InvalidHex,
         InvalidTag,
+        InvalidJson,
     };
-    pub const ParseError = StdParseError || ExtraParseError || Allocator.Error;
+    pub const ParseError = ExtraParseError || Allocator.Error;
 
     pub fn init(allocator: Allocator) Parser {
         return .{ .allocator = allocator };
@@ -113,11 +115,14 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser, json: []const u8) ParseError!ContactEvent {
-        var follows_list = std.ArrayList(ContactKey).init(self.allocator);
+        var follows_list = std.array_list.Managed(ContactKey).init(self.allocator);
         var cleanup_list = true;
         errdefer if (cleanup_list) follows_list.deinit();
 
-        var parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, json, .{});
+        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, json, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ExtraParseError.InvalidJson,
+        };
         defer parsed.deinit();
 
         const root = parsed.value;
@@ -165,15 +170,15 @@ pub const Parser = struct {
 
     fn parseTimestamp(value: std.json.Value) ParseError!u64 {
         return switch (value) {
-            .integer => |x| std.math.cast(u64, x) catch ExtraParseError.InvalidType,
-            .float => |x| std.math.cast(u64, @intFromFloat(@floor(x))) catch ExtraParseError.InvalidType,
+            .integer => |x| std.math.cast(u64, x) orelse return ExtraParseError.InvalidType,
+            .float => ExtraParseError.InvalidType,
             .string => |s| std.fmt.parseInt(u64, s, 10) catch ExtraParseError.InvalidType,
             .number_string => |s| std.fmt.parseInt(u64, s, 10) catch ExtraParseError.InvalidType,
             else => ExtraParseError.InvalidType,
         };
     }
 
-    fn getStringField(obj: std.json.Object, name: []const u8) ParseError![]const u8 {
+    fn getStringField(obj: std.json.ObjectMap, name: []const u8) ParseError![]const u8 {
         const value = obj.get(name) orelse return ExtraParseError.MissingField;
         if (value != .string) return ExtraParseError.InvalidType;
         return value.string;
@@ -182,8 +187,8 @@ pub const Parser = struct {
     fn hexToKey(hex: []const u8) ParseError!ContactKey {
         if (hex.len != 64) return ExtraParseError.InvalidHex;
         var out: ContactKey = undefined;
-        const written = std.fmt.hexToBytes(out[0..], hex) catch return ExtraParseError.InvalidHex;
-        if (written != 32) return ExtraParseError.InvalidHex;
+        const decoded = std.fmt.hexToBytes(out[0..], hex) catch return ExtraParseError.InvalidHex;
+        if (decoded.len != 32) return ExtraParseError.InvalidHex;
         return out;
     }
 };
@@ -195,7 +200,7 @@ pub const Fetcher = struct {
     store: *Store,
     parser: Parser,
 
-    pub const FetchError = Allocator.Error || net.RelayClient.ConnectError || net.RelayClient.SendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || error{CompletionTimeout};
+    pub const FetchError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || error{CompletionTimeout};
 
     pub fn init(allocator: Allocator, store: *Store) Fetcher {
         return .{
@@ -212,10 +217,10 @@ pub const Fetcher = struct {
     pub fn fetchContacts(self: *Fetcher, npub: ContactKey, relays: []const []const u8, db: *ndb.Ndb) FetchError!void {
         if (relays.len == 0) return;
 
-        var filter = try proto.buildContactsFilter(self.allocator, .{ .author = npub });
+        const filter = try proto.buildContactsFilter(self.allocator, .{ .author = npub });
         defer self.allocator.free(filter);
 
-        var clients = try self.allocator.alloc(ClientState, relays.len);
+        const clients = try self.allocator.alloc(ClientState, relays.len);
         var initialized: usize = 0;
         errdefer {
             var idx: usize = 0;
@@ -312,11 +317,11 @@ pub const Fetcher = struct {
 
             try client.connect(null);
 
-            var sub_id = try proto.nextSubId(allocator);
+            const sub_id = try proto.nextSubId(allocator);
             errdefer allocator.free(sub_id);
 
             const filters = [_][]const u8{filter};
-            var req = try proto.buildReq(allocator, sub_id, &filters);
+            const req = try proto.buildReq(allocator, sub_id, &filters);
             defer allocator.free(req);
 
             try client.sendText(req);

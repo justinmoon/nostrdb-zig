@@ -1,7 +1,7 @@
 // Test file demonstrating Rust-like API consistency
 
 const std = @import("std");
-const ndb = @import("ndb.zig");
+const ndb = @import("ndb");
 
 test "Rust-like API: methods on Ndb struct" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

@@ -1,5 +1,5 @@
 const std = @import("std");
-const ndb = @import("ndb.zig");
+const ndb = @import("ndb");
 
 test "verify signing produces valid id/sig" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

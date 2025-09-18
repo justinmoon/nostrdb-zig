@@ -161,7 +161,7 @@ pub const RelayClient = struct {
     pub fn sendText(self: *RelayClient, payload: []const u8) SendError!void {
         if (self.state_internal != .connected) return SendError.NotConnected;
 
-        var buffer = try self.allocator.dupe(u8, payload);
+        const buffer = try self.allocator.dupe(u8, payload);
         defer self.allocator.free(buffer);
 
         if (self.ws_client) |*client| {
@@ -201,11 +201,9 @@ pub const RelayClient = struct {
         while (self.queue_head == null and self.state_internal == .connected) {
             if (remaining_ns) |*ns| {
                 const before = std.time.nanoTimestamp();
-                const wait_result = self.cond.timedWait(&self.mutex, ns.*);
-                switch (wait_result) {
+                self.cond.timedWait(&self.mutex, ns.*) catch |err| switch (err) {
                     error.Timeout => return null,
-                    else => {},
-                }
+                };
                 const after = std.time.nanoTimestamp();
                 const elapsed = if (after > before)
                     @as(u64, @intCast(@min(@as(i128, after - before), @as(i128, std.math.maxInt(u64)))))
@@ -232,7 +230,7 @@ pub const RelayClient = struct {
     }
 
     fn enqueueMessage(self: *RelayClient, msg: message.RelayMessage) !void {
-        var node = try self.allocator.create(MessageNode);
+        const node = try self.allocator.create(MessageNode);
         node.* = .{ .message = msg, .next = null };
 
         self.mutex.lock();
@@ -268,13 +266,12 @@ pub const RelayClient = struct {
     fn readLoopThread(self: *RelayClient) void {
         var handler = ConnectionHandler{ .parent = self };
         if (self.ws_client) |*client| {
-            const read_result = client.readLoop(&handler);
-            if (read_result) |err| {
+            var had_error = false;
+            client.readLoop(&handler) catch |err| {
+                had_error = true;
                 log.err("websocket read loop terminated: {}", .{err});
-                self.state_internal = .failed;
-            } else {
-                self.state_internal = .closed;
-            }
+            };
+            self.state_internal = if (had_error) .failed else .closed;
             client.deinit();
             self.ws_client = null;
         } else {
@@ -306,12 +303,14 @@ pub const RelayClient = struct {
     }
 
     fn handleBinary(self: *RelayClient, data: []const u8) void {
-        log.debug("ignoring binary frame of {d} bytes", .{data.len});
+        _ = self;
+        _ = data;
+        log.debug("ignoring binary frame", .{});
     }
 
     fn handlePing(self: *RelayClient, payload: []const u8) void {
         if (self.ws_client) |*client| {
-            var buffer = self.allocator.dupe(u8, payload) catch {
+            const buffer = self.allocator.dupe(u8, payload) catch {
                 log.warn("failed to reply to ping: out of memory", .{});
                 return;
             };
@@ -332,6 +331,7 @@ pub const RelayClient = struct {
         parent: *RelayClient,
 
         pub fn serverMessage(self: *ConnectionHandler, data: []u8, tpe: websocket.MessageTextType) !void {
+            defer self.parent.allocator.free(data);
             switch (tpe) {
                 .text => self.parent.handleText(data),
                 .binary => self.parent.handleBinary(data),
@@ -339,10 +339,12 @@ pub const RelayClient = struct {
         }
 
         pub fn serverPing(self: *ConnectionHandler, data: []u8) !void {
+            defer self.parent.allocator.free(data);
             self.parent.handlePing(data);
         }
 
-        pub fn serverClose(self: *ConnectionHandler) !void {
+        pub fn serverClose(self: *ConnectionHandler, data: []u8) !void {
+            defer self.parent.allocator.free(data);
             self.parent.handleClose();
         }
 
