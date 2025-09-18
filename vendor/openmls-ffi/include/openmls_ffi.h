@@ -58,6 +58,35 @@ openmls_status_t openmls_ffi_group_create(void *provider,
                                           struct OpenmlsFfiBuffer *out_welcome_message,
                                           struct OpenmlsFfiBuffer *out_group_info);
 
+openmls_status_t openmls_ffi_group_add_members(void *provider,
+                                               const struct OpenmlsFfiBuffer *group_id,
+                                               const struct OpenmlsFfiBuffer *key_packages,
+                                               uintptr_t key_package_len,
+                                               struct OpenmlsFfiBuffer *out_commit_message,
+                                               struct OpenmlsFfiBuffer *out_welcome_message,
+                                               struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_remove_members(void *provider,
+                                                  const struct OpenmlsFfiBuffer *group_id,
+                                                  const uint32_t *leaf_indices,
+                                                  uintptr_t leaf_indices_len,
+                                                  struct OpenmlsFfiBuffer *out_commit_message,
+                                                  struct OpenmlsFfiBuffer *out_welcome_message,
+                                                  struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_self_update(void *provider,
+                                               const struct OpenmlsFfiBuffer *group_id,
+                                               struct OpenmlsFfiBuffer *out_commit_message,
+                                               struct OpenmlsFfiBuffer *out_welcome_message,
+                                               struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_leave(void *provider,
+                                         const struct OpenmlsFfiBuffer *group_id,
+                                         struct OpenmlsFfiBuffer *out_message);
+
+openmls_status_t openmls_ffi_group_merge_pending_commit(void *provider,
+                                                        const struct OpenmlsFfiBuffer *group_id);
+
 openmls_status_t openmls_ffi_key_package_create(void *provider,
                                                 const char *identity_hex,
                                                 uint16_t ciphersuite_value,

@@ -17,6 +17,15 @@
         zigPkg = zig.packages.${system}."0.15.1";
         
         # Development dependencies
+        linuxExtraDeps = if pkgs.stdenv.hostPlatform.isLinux then with pkgs; [
+          gcc
+          glibc
+          glibc.dev
+          linuxHeaders
+        ] else [];
+
+        darwinExtraDeps = if pkgs.stdenv.hostPlatform.isDarwin then [ pkgs.clang ] else [];
+
         devDeps = with pkgs; [
           zigPkg
           pkg-config
@@ -28,11 +37,9 @@
           cmake
           # Git for fetching submodules
           git
-        ] ++ lib.optionals stdenv.isLinux [
-          gcc
-        ] ++ lib.optionals stdenv.isDarwin [
-          clang
-        ];
+          cargo
+          rustc
+        ] ++ linuxExtraDeps ++ darwinExtraDeps;
         
         # CI script that runs all tests and checks
         ciScript = pkgs.writeShellScriptBin "ci" ''
@@ -57,18 +64,25 @@
           
           # On Linux, we need to help Zig find the libc
           # Note: This section is only evaluated at runtime on Linux, not during Nix evaluation
-          if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            # Use Zig's ability to use system libc  
-            export ZIG_LIBC_TXT=$(mktemp)
-            cat > $ZIG_LIBC_TXT << 'LIBC_EOF'
-          include_dir=/usr/include
-          sys_include_dir=/usr/include  
-          crt_dir=/usr/lib
+          if [[ "$(uname)" == "Linux" ]]; then
+            export ZIG_LIBC_TXT="$(mktemp)"
+            cat > "$ZIG_LIBC_TXT" <<'LIBC_EOF'
+          include_dir=${pkgs.glibc.dev}/include
+          sys_include_dir=${pkgs.glibc.dev}/include
+          static_include_dir=${pkgs.glibc.dev}/include
+          crt_dir=${pkgs.glibc}/lib
+          static_crt_dir=${pkgs.glibc}/lib
           msvc_lib_dir=
           kernel32_lib_dir=
-          gcc_dir=
+          gcc_dir=${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.cc.targetPlatform.config}/${pkgs.stdenv.cc.cc.version}
+          dynamic_linker=${pkgs.stdenv.cc.bintools.dynamicLinker}
           LIBC_EOF
-            echo "Created libc config at $ZIG_LIBC_TXT"
+            export ZIG_LIBC="$ZIG_LIBC_TXT"
+            export GLIBC_INCLUDE_DIR=${pkgs.glibc.dev}/include
+            export LINUX_HEADERS_DIR=${pkgs.linuxHeaders}/include
+            export GLIBC_LIB_DIR=${pkgs.glibc}/lib
+            export C_INCLUDE_PATH="${pkgs.glibc.dev}/include:${pkgs.linuxHeaders}/include"
+            export LIBRARY_PATH="${pkgs.glibc}/lib"
           fi
           echo ""
           
@@ -91,13 +105,35 @@
           fi
           echo "✓ nostrdb cloned"
           echo ""
-          
-          echo "→ Build and test steps temporarily disabled"
-          echo "ℹ️  The build currently fails in Nix due to C header path issues"
-          echo "ℹ️  This is a known issue with Zig + Nix when compiling C dependencies"
-          echo "ℹ️  For now, we're only running the formatting check"
+          echo "→ Ensuring OpenMLS workspace checkouts..."
+          mkdir -p checkouts/openmls
+          if [ ! -d "checkouts/openmls/repo" ]; then
+            git clone --depth 1 --branch openmls-v0.7.0 https://github.com/openmls/openmls.git checkouts/openmls/repo
+          fi
+          echo "✓ OpenMLS crates prepared"
           echo ""
           
+          echo "→ Preparing Rust toolchain..."
+          export CARGO_HOME="''${TMPDIR:-/tmp}/cargo-home"
+          mkdir -p "$CARGO_HOME"
+          export PATH="${pkgs.cargo}/bin:${pkgs.rustc}/bin:$PATH"
+          export RUST_BACKTRACE=1
+          ${pkgs.cargo}/bin/cargo --version
+          ${pkgs.rustc}/bin/rustc --version
+          echo ""
+
+          echo "→ Building Zig targets..."
+          ${zigPkg}/bin/zig build
+          echo ""
+
+          echo "→ Running Zig unit tests..."
+          ${zigPkg}/bin/zig build test
+          echo ""
+
+          echo "→ Running OpenMLS FFI integration tests..."
+          ${zigPkg}/bin/zig build openmls-ffi-test
+          echo ""
+
           # Check for common issues
           echo "→ Running additional checks..."
           

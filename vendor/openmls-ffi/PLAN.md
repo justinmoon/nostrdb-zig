@@ -67,29 +67,35 @@ Everything the Zig port must call stems from these stages; the lists below are d
 - Support enums `Sender`, `QueuedProposal`, `StagedCommit`, `Welcome`, `GroupInfo` as opaque handles or tagged unions exposed through the FFI results (`messages.rs:364-415`, `groups.rs:895-918`).
 - TLS helpers from `tls_codec` for (de)serialization of messages, welcomes, group info, and extensions.
 
-## Implementation Phases (Suggested Order)
+## Implementation Phases & Progress
 
-1. **Identity Foundations**
-   - Extend FFI with credential/keypair generation, storage access, and key package build/parse APIs.
-   - Surface `Capabilities` + extension helpers so Zig can reproduce `create_key_package_for_event`.
+> Status: Phase 4 completed after wiring membership mutation FFI and Zig coverage; phases 5-6 remain.
 
-2. **Group Creation & Persistence**
-   - Bind `MlsGroupCreateConfig`, `MlsGroup::new`, member addition, welcome serialization, and `MlsGroup::load/merge_pending_commit`.
-   - Expose helpers to read/write `NostrGroupDataExtension` (raw bytes + convenience parsing).
 
-3. **Messaging Pipeline**
-   - Provide message creation (`MlsGroup::create_message`), exporter secret export, and decrypt/process routines (`MlsMessageIn`, `ProcessedMessageContent`).
-   - Return structured results so Zig can distinguish application/proposal/commit cases.
+1. **Identity Foundations** *(complete)*
+   - ✅ `openmls_ffi_provider_*` exposes RustCrypto + memory storage.
+   - ✅ `openmls_ffi_key_package_create` handles credential + signer generation and TLS serialization.
+   - ✅ Zig test harness imports the header and exercises provider/key package creation.
 
-4. **Membership Mutations**
-   - Bind add/remove/self-update/leave entrypoints, including proposal handling and staged commit merges.
-   - Ensure Leaf node/admin checks can be implemented (either via callbacks or extra FFI queries).
+2. **Group Creation & Persistence** *(complete)*
+   - ✅ `openmls_ffi_group_create` wraps `MlsGroup::new`, member addition, welcome serialization, and TLS output.
+   - ✅ Crate refactored into focused modules (`buffer`, `provider`, `key_packages`, `groups`, `welcomes`, `messages`, `helpers`) to keep files short.
 
-5. **Welcome Handling & Multi-epoch Support**
-   - Finish welcome parsing/accept flows (`StagedWelcome`), group join configs, and exporter secret caching required for epoch backfill.
+3. **Welcome Handling & Messaging Pipeline** *(complete for application messages)*
+   - ✅ `openmls_ffi_welcome_parse`, `_welcome_join`, `_welcome_free` expose the staged join flow.
+   - ✅ `openmls_ffi_message_encrypt` / `_message_decrypt` round-trip application messages.
+   - ✅ Zig test (`tests/openmls_ffi.zig`) covers group creation, welcome join, and encrypt/decrypt.
 
-6. **Error Surfaces & Utilities**
-   - Standardize error enums/structs returned across functions (wrapping `ProcessMessageError`, `ValidationError`, etc.).
-   - Add serialization helpers for welcomes, commits, group info to avoid duplicating TLS handling in Zig.
+4. **Membership Mutations** *(complete for staged commits)*
+   - ✅ FFI exports wrap add/remove/self-update/leave plus merge helpers and hand back commit/welcome/group-info payloads.
+   - ✅ Zig integration test now exercises add->welcome join, removal, self-update, and leave flows.
+   - ✅ `nix run .#ci` bootstraps the OpenMLS workspace, builds the Rust bridge, and runs the Zig FFI test end-to-end.
 
-This inventory mirrors every OpenMLS interaction exercised by `mls_memory.rs`. Implementing the phases in order ensures we can re-create the script end-to-end from Zig once each block is complete.
+5. **Exporter Secrets & Multi-Epoch Support** *(planned)*
+   - TODO: Expose exporter secret helpers so Zig can manage NIP-44 keys and multi-epoch decrypt attempts.
+
+6. **Error Surfaces & Utilities** *(ongoing)*
+   - TODO: Map OpenMLS error enums into richer FFI status codes; provide convenience serializers for group metadata.
+   - TODO: Polish Linux libc discovery so CI runs without extra environment overrides.
+
+This progress log mirrors every OpenMLS interaction exercised by `mls_memory.rs`. Completing the remaining phases will let us reproduce the entire flow from Zig.

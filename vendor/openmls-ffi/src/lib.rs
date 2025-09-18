@@ -11,7 +11,11 @@ pub use buffer::{
     openmls_ffi_buffer_free, openmls_ffi_buffer_init_empty, OpenmlsExtensionInput,
     OpenmlsFfiBuffer, OpenmlsProcessedMessageType,
 };
-pub use groups::openmls_ffi_group_create;
+pub use groups::{
+    openmls_ffi_group_add_members, openmls_ffi_group_create, openmls_ffi_group_leave,
+    openmls_ffi_group_merge_pending_commit, openmls_ffi_group_remove_members,
+    openmls_ffi_group_self_update,
+};
 pub use key_packages::openmls_ffi_key_package_create;
 pub use messages::{openmls_ffi_message_decrypt, openmls_ffi_message_encrypt};
 pub use provider::{

@@ -8,11 +8,11 @@ name = "openmls_ffi"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-openmls = { path = "../../checkouts/openmls/openmls", version = "0.7.0" }
-openmls_rust_crypto = { path = "../../checkouts/openmls/openmls_rust_crypto", version = "0.4.0" }
-openmls_traits = { path = "../../checkouts/openmls/traits", version = "0.4.0" }
-openmls_basic_credential = { path = "../../checkouts/openmls/basic_credential", version = "0.4.0" }
-openmls_memory_storage = { path = "../../checkouts/openmls/memory_storage", version = "0.4.0" }
+openmls = { path = "../../checkouts/openmls/repo/openmls", version = "0.7.0" }
+openmls_rust_crypto = { path = "../../checkouts/openmls/repo/openmls_rust_crypto", version = "0.4.0" }
+openmls_traits = { path = "../../checkouts/openmls/repo/traits", version = "0.4.0" }
+openmls_basic_credential = { path = "../../checkouts/openmls/repo/basic_credential", version = "0.4.0" }
+openmls_memory_storage = { path = "../../checkouts/openmls/repo/memory_storage", version = "0.4.0" }
 thiserror = "1"
 
 [build-dependencies]
