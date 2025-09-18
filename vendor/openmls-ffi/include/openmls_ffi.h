@@ -13,7 +13,18 @@
 
 typedef int openmls_status_t;
 
+typedef struct OpenmlsFfiBuffer {
+  uint8_t *data;
+  uintptr_t len;
+} OpenmlsFfiBuffer;
+
 #define OPENMLS_STATUS_OK 0
+
+#define OPENMLS_STATUS_ERROR 1
+
+#define OPENMLS_STATUS_NULL_POINTER 2
+
+#define OPENMLS_STATUS_INVALID_ARGUMENT 3
 
 /**
  * Returns a pointer to a static, null-terminated string describing the FFI layer version.
@@ -38,5 +49,21 @@ void *openmls_ffi_provider_new_default(void);
  * Releases a provider created by [`openmls_ffi_provider_new_default`].
  */
 void openmls_ffi_provider_free(void *provider);
+
+/**
+ * Releases memory owned by the FFI layer.
+ */
+void openmls_ffi_buffer_free(struct OpenmlsFfiBuffer buffer);
+
+/**
+ * Builds a key package for publishing to relays.
+ */
+openmls_status_t openmls_ffi_key_package_create(void *provider,
+                                                const char *identity_hex,
+                                                uint16_t ciphersuite_value,
+                                                const uint16_t *extension_types,
+                                                uintptr_t extension_len,
+                                                bool mark_as_last_resort,
+                                                struct OpenmlsFfiBuffer *out_key_package);
 
 #endif /* OPENMLS_FFI_H */

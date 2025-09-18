@@ -17,6 +17,7 @@ To use from Zig:
 3. Link against `openmls_ffi` by adding the appropriate library search path and `-lopenmls_ffi`.
 
 The library currently exposes discovery helpers (`openmls_ffi_version`,
-`openmls_ffi_smoketest`) and a default provider constructor
-(`openmls_ffi_provider_new_default` / `openmls_ffi_provider_free`). Additional bindings will
-extend the header automatically when new APIs are exported.
+`openmls_ffi_smoketest`), a default provider constructor
+(`openmls_ffi_provider_new_default` / `openmls_ffi_provider_free`), and key package
+construction (`openmls_ffi_key_package_create`, `openmls_ffi_buffer_free`). Additional bindings
+will extend the header automatically when new APIs are exported.
