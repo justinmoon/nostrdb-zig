@@ -18,3 +18,4 @@ nostrdb/deps/lmdb/*.o
 nostrdb-rs/
 
 checkouts/
+nostrdb/
