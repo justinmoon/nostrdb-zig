@@ -19,12 +19,12 @@ typedef enum OpenmlsProcessedMessageType {
   Other = 255,
 } OpenmlsProcessedMessageType;
 
-typedef int openmls_status_t;
-
 typedef struct OpenmlsFfiBuffer {
   uint8_t *data;
   uintptr_t len;
 } OpenmlsFfiBuffer;
+
+typedef int openmls_status_t;
 
 typedef struct OpenmlsExtensionInput {
   uint16_t extension_type;
@@ -39,45 +39,9 @@ typedef struct OpenmlsExtensionInput {
 
 #define OPENMLS_STATUS_INVALID_ARGUMENT 3
 
-/**
- * Returns a pointer to a static, null-terminated string describing the FFI layer version.
- * Caller must not free the returned pointer.
- */
-const char *openmls_ffi_version(void);
-
-/**
- * Simple smoketest that instantiates the default crypto provider and returns OK.
- */
-openmls_status_t openmls_ffi_smoketest(void);
-
-/**
- * Creates a new provider backed by RustCrypto and in-memory storage.
- *
- * The caller takes ownership of the returned pointer and must release it with
- * [`openmls_ffi_provider_free`].
- */
-void *openmls_ffi_provider_new_default(void);
-
-/**
- * Releases a provider created by [`openmls_ffi_provider_new_default`].
- */
-void openmls_ffi_provider_free(void *provider);
-
-/**
- * Releases memory owned by the FFI layer.
- */
 void openmls_ffi_buffer_free(struct OpenmlsFfiBuffer buffer);
 
-/**
- * Builds a key package for publishing to relays.
- */
-openmls_status_t openmls_ffi_key_package_create(void *provider,
-                                                const char *identity_hex,
-                                                uint16_t ciphersuite_value,
-                                                const uint16_t *extension_types,
-                                                uintptr_t extension_len,
-                                                bool mark_as_last_resort,
-                                                struct OpenmlsFfiBuffer *out_key_package);
+int32_t openmls_ffi_buffer_init_empty(struct OpenmlsFfiBuffer *out_buffer);
 
 openmls_status_t openmls_ffi_group_create(void *provider,
                                           const char *creator_identity_hex,
@@ -94,6 +58,33 @@ openmls_status_t openmls_ffi_group_create(void *provider,
                                           struct OpenmlsFfiBuffer *out_welcome_message,
                                           struct OpenmlsFfiBuffer *out_group_info);
 
+openmls_status_t openmls_ffi_key_package_create(void *provider,
+                                                const char *identity_hex,
+                                                uint16_t ciphersuite_value,
+                                                const uint16_t *extension_types,
+                                                uintptr_t extension_len,
+                                                bool mark_as_last_resort,
+                                                struct OpenmlsFfiBuffer *out_key_package);
+
+openmls_status_t openmls_ffi_message_encrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *plaintext,
+                                             struct OpenmlsFfiBuffer *out_ciphertext);
+
+openmls_status_t openmls_ffi_message_decrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *ciphertext,
+                                             struct OpenmlsFfiBuffer *out_plaintext,
+                                             enum OpenmlsProcessedMessageType *out_message_type);
+
+const char *openmls_ffi_version(void);
+
+openmls_status_t openmls_ffi_smoketest(void);
+
+void *openmls_ffi_provider_new_default(void);
+
+void openmls_ffi_provider_free(void *provider);
+
 openmls_status_t openmls_ffi_welcome_parse(void *provider,
                                            const struct OpenmlsFfiBuffer *welcome_message,
                                            const struct OpenmlsFfiBuffer *ratchet_tree,
@@ -106,16 +97,5 @@ openmls_status_t openmls_ffi_welcome_join(void *provider,
                                           struct OpenmlsFfiBuffer *out_group_id);
 
 void openmls_ffi_welcome_free(void *staged_welcome);
-
-openmls_status_t openmls_ffi_message_encrypt(void *provider,
-                                             const struct OpenmlsFfiBuffer *group_id,
-                                             const struct OpenmlsFfiBuffer *plaintext,
-                                             struct OpenmlsFfiBuffer *out_ciphertext);
-
-openmls_status_t openmls_ffi_message_decrypt(void *provider,
-                                             const struct OpenmlsFfiBuffer *group_id,
-                                             const struct OpenmlsFfiBuffer *ciphertext,
-                                             struct OpenmlsFfiBuffer *out_plaintext,
-                                             enum OpenmlsProcessedMessageType *out_message_type);
 
 #endif /* OPENMLS_FFI_H */
