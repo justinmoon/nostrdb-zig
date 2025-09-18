@@ -118,6 +118,20 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    const megalith = b.addExecutable(.{
+        .name = "megalith",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("cli/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    megalith.linkLibrary(lib);
+
+    const install_megalith = b.addInstallArtifact(megalith, .{});
+    const megalith_step = b.step("megalith", "Build the Megalith CLI");
+    megalith_step.dependOn(&install_megalith.step);
+
     // Add libxev dependency
     const xev = b.dependency("libxev", .{
         .target = target,

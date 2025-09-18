@@ -11,6 +11,13 @@ Goal: Evolve nostrdb-zig into a monorepo (Megalith) that ingests Nostr events se
 - Maintain in‑memory KV for timeline: `contacts:<npub>`, `timeline:<npub>`, `timeline_meta:<npub>`, `event:<id>`.
 - Exclude replies/reactions/reposts/zaps/DMs from MVP.
 
+## Notes
+
+- Each phase is developed on its own feature branch (e.g. `phaseN-*`) and merged back to `master` only after review & approval.
+- Only create new top-level directories when the phase implements real code in them; avoid empty scaffolding.
+- rust-nostr, notedeck and go-nostr are useful references (especially for writing tests) and are all downloaded to ./checkouts folder.
+- We're using Zig 0.15.1.
+
 ## Repo Shape (evolve in‑place)
 
 - Keep existing: `src/` (nostrdb‑zig code)
@@ -27,7 +34,7 @@ Goal: Evolve nostrdb-zig into a monorepo (Megalith) that ingests Nostr events se
 ## Phase 0 — Bootstrap
 
 Implement
-- Add module skeletons and a `megalith` build target.
+- Add a `megalith` build target to `zig build`.
 - CLI scaffold: `megalith ingest --npub <npub> --relays <wss://...,...> --limit 500`.
 
 Acceptance
@@ -151,5 +158,4 @@ Acceptance
 - nostrdb‑zig remains the ingestion core; no API changes needed for MVP.
 - We rely on nostrdb for signature/id validation; tests assert rejected events do not reach the timeline.
 - SSR layer is out of scope here; the timeline KV and event store are designed to be consumed by SSR quickly.
-
 
