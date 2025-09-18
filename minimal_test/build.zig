@@ -18,19 +18,19 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath(b.path("../nostrdb/src"));
     exe.addIncludePath(b.path("../nostrdb/ccan"));
     exe.addIncludePath(b.path("../nostrdb/deps/secp256k1/include"));
-    
+
     // macOS needs Security framework
     if (target.result.os.tag == .macos) {
         exe.linkFramework("Security");
     }
-    
+
     exe.linkLibC();
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
-    
+
     // Test 2 with Zig allocators
     const exe2 = b.addExecutable(.{
         .name = "test_signing2",
@@ -48,11 +48,11 @@ pub fn build(b: *std.Build) void {
         exe2.linkFramework("Security");
     }
     exe2.linkLibC();
-    
+
     const run_cmd2 = b.addRunArtifact(exe2);
     const run_step2 = b.step("run2", "Run test 2");
     run_step2.dependOn(&run_cmd2.step);
-    
+
     // Test 3 - comprehensive alignment test
     const exe3 = b.addExecutable(.{
         .name = "test_signing3",
@@ -70,11 +70,11 @@ pub fn build(b: *std.Build) void {
         exe3.linkFramework("Security");
     }
     exe3.linkLibC();
-    
+
     const run_cmd3 = b.addRunArtifact(exe3);
     const run_step3 = b.step("run3", "Run test 3");
     run_step3.dependOn(&run_cmd3.step);
-    
+
     // Test 4 - reproduce Test 14 exactly
     const exe4 = b.addExecutable(.{
         .name = "test_signing4",
@@ -92,7 +92,7 @@ pub fn build(b: *std.Build) void {
         exe4.linkFramework("Security");
     }
     exe4.linkLibC();
-    
+
     const run_cmd4 = b.addRunArtifact(exe4);
     const run_step4 = b.step("run4", "Run test 4");
     run_step4.dependOn(&run_cmd4.step);

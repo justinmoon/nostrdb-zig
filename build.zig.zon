@@ -3,12 +3,15 @@
     .version = "0.0.1",
     .fingerprint = 0xe7c4d51ce0564e1,
     .dependencies = .{
+        // Using zen-eth fork with Zig 0.15.1 compatibility fixes
+        // See: https://github.com/mitchellh/libxev/pull/189
         .libxev = .{
             .url = "https://github.com/zen-eth/libxev/archive/refs/heads/0.15.1.tar.gz",
             .hash = "122043cc2f29f16a0997820f8640463628c3ca9a4815a93113368b6dc726da7a4585",
         },
         .websocket = .{
-            .path = "checkouts/websocket.zig",
+            .url = "https://github.com/karlseguin/websocket.zig/archive/refs/heads/master.tar.gz",
+            .hash = "12202de98b3f269a07410577369582a1ffcdf4983e525da0ecea1583b11b9c90596a",
         },
     },
     .paths = .{

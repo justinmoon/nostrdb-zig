@@ -7,18 +7,18 @@ const Ndb = ndb.Ndb;
 const Config = ndb.Config;
 
 // Test event from Rust tests
-const TEST_EVENT_1 = 
+const TEST_EVENT_1 =
     \\["EVENT","b",{"id": "702555e52e82cc24ad517ba78c21879f6e47a7c0692b9b20df147916ae8731a3","pubkey": "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15","created_at": 1702675561,"kind": 1,"tags": [],"content": "hello, world","sig": "2275c5f5417abfd644b7bc74f0388d70feb5d08b6f90fa18655dda5c95d013bfbc5258ea77c05b7e40e0ee51d8a2efa931dc7a0ec1db4c0a94519762c6625675"}]
 ;
 
 // Additional test events for multiple_events test
-const TEST_EVENT_2 = 
+const TEST_EVENT_2 =
     \\["EVENT","s",{"id": "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930","pubkey": "aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe","created_at": 1704401597,"kind": 1,"tags": [],"content": "hello","sig": "232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09"}]
 ;
 
 // Event 3: Using a known valid event from test.zig
 // This event has been verified to work in other tests
-const TEST_EVENT_3 = 
+const TEST_EVENT_3 =
     \\["EVENT","c",{"id": "0a350c5851af6f6ce368bab4e2d4fe442a1318642c7fe58de5392103700c10fc","pubkey": "dfa3fc062f7430dab3d947417fd3c6fb38a7e60f82ffe3387e2679d4c6919b1d","created_at": 1704404822,"kind": 1,"tags": [],"content": "hello2","sig": "48a0bb9560b89ee2c6b88edcf1cbeeff04f5e1b10d26da8564cac851065f30fa6961ee51f450cefe5e8f4895e301e8ffb2be06a2ff44259684fbd4ea1c885696"}]
 ;
 
@@ -56,7 +56,7 @@ test "Test 18: subscribe_event_works (simplified)" {
 
     // Wait for notes using simple synchronous approach
     const note = try xev_sub.waitForNotesSync(&db, sub_id, 2000);
-    
+
     // Note key should be 1 (first note in database)
     try std.testing.expectEqual(@as(u64, 1), note);
 }
@@ -95,7 +95,7 @@ test "Test 19: multiple_events_work (simplified)" {
     var notes_found: usize = 0;
     var notes_buf: [256]u64 = undefined;
     const start = std.time.milliTimestamp();
-    
+
     while (notes_found < events.len and std.time.milliTimestamp() - start < 2000) {
         const count = db.pollForNotes(sub_id, &notes_buf);
         if (count > 0) {
@@ -133,12 +133,12 @@ test "Test 20: multiple_events_with_final_pause_work (simplified)" {
     // Process events with pause
     try db.processEvent(TEST_EVENT_1);
     try db.processEvent(TEST_EVENT_2);
-    
+
     // Small pause before last event
     std.Thread.sleep(50 * std.time.ns_per_ms);
-    
+
     try db.processEvent(TEST_EVENT_3);
-    
+
     // Give background indexing time to complete
     std.Thread.sleep(300 * std.time.ns_per_ms);
 
@@ -146,7 +146,7 @@ test "Test 20: multiple_events_with_final_pause_work (simplified)" {
     var total: usize = 0;
     const deadline = std.time.milliTimestamp() + 2000;
     var notes_buf: [256]u64 = undefined;
-    
+
     while (total < 3 and std.time.milliTimestamp() < deadline) {
         const count = db.pollForNotes(sub_id, &notes_buf);
         if (count > 0) {
@@ -184,7 +184,7 @@ test "Test 21: automatic cleanup with unsubscribe" {
         defer db.unsubscribe(sub_id) catch {};
 
         try db.processEvent(TEST_EVENT_1);
-        
+
         // Give background indexing time
         std.Thread.sleep(100 * std.time.ns_per_ms);
 
@@ -203,7 +203,7 @@ test "Test 21: automatic cleanup with unsubscribe" {
     defer db.unsubscribe(sub_id2) catch {};
 
     try db.processEvent(TEST_EVENT_2);
-    
+
     // Give background indexing time
     std.Thread.sleep(100 * std.time.ns_per_ms);
 
@@ -231,10 +231,10 @@ test "Test 22: subscription cancellation" {
     try f.kinds(&.{1});
 
     const sub_id = db.subscribe(&f, 1);
-    
+
     // Process first event
     try db.processEvent(TEST_EVENT_1);
-    
+
     // Give background indexing time
     std.Thread.sleep(100 * std.time.ns_per_ms);
 
@@ -282,7 +282,7 @@ test "Test 22: subscription cancellation" {
 //     // Process events
 //     try db.processEvent(TEST_EVENT_1);
 //     try db.processEvent(TEST_EVENT_2);
-    
+
 //     // Give background indexing time
 //     std.Thread.sleep(150 * std.time.ns_per_ms);
 

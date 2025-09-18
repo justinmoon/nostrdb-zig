@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("xev", xev.module("xev"));
     b.installArtifact(exe);
-    
+
     // Create rearm test executable
     const rearm_exe = b.addExecutable(.{
         .name = "rearm-test",
@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
     });
     rearm_exe.root_module.addImport("xev", xev.module("xev"));
     b.installArtifact(rearm_exe);
-    
+
     // Working solution executable
     const solution_exe = b.addExecutable(.{
         .name = "solution",
@@ -51,13 +51,13 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
     const run_step = b.step("run", "Run the demo");
     run_step.dependOn(&run_cmd.step);
-    
+
     // Rearm test run command
     const run_rearm = b.addRunArtifact(rearm_exe);
     run_rearm.step.dependOn(b.getInstallStep());
     const rearm_step = b.step("rearm", "Run rearm test");
     rearm_step.dependOn(&run_rearm.step);
-    
+
     // Solution run command
     const run_solution = b.addRunArtifact(solution_exe);
     run_solution.step.dependOn(b.getInstallStep());
