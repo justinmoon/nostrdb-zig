@@ -62,18 +62,41 @@
           echo "✓ Code formatting OK"
           echo ""
           
+          echo "→ Cloning nostrdb with submodules..."
+          if [ ! -d "nostrdb" ]; then
+            git clone https://github.com/damus-io/nostrdb.git --depth 1
+            cd nostrdb
+            git submodule update --init --recursive --depth 1
+            cd ..
+          fi
+          echo "✓ nostrdb cloned"
+          echo ""
+          
           echo "→ Building project..."
-          if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe; then
+          # Use native target to find system libc
+          export CC="${pkgs.stdenv.cc}/bin/cc"
+          export ZIG_LOCAL_CACHE_DIR="$(pwd)/.zig-cache"
+          export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache-$$"
+          
+          if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe -Dtarget=native-native; then
             echo "✗ Build failed!"
-            exit 1
+            # Try with musl if glibc fails
+            echo "Retrying with musl target..."
+            if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe -Dtarget=native-linux-musl; then
+              echo "✗ Build failed with musl too!"
+              exit 1
+            fi
           fi
           echo "✓ Build successful"
           echo ""
           
           echo "→ Running tests..."
-          if ! ${zigPkg}/bin/zig build test; then
-            echo "✗ Tests failed!"
-            exit 1
+          if ! ${zigPkg}/bin/zig build test -Dtarget=native-native 2>/dev/null; then
+            echo "Retrying tests with musl target..."
+            if ! ${zigPkg}/bin/zig build test -Dtarget=native-linux-musl; then
+              echo "✗ Tests failed!"
+              exit 1
+            fi
           fi
           echo "✓ All tests passed"
           echo ""
