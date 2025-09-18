@@ -8,7 +8,8 @@
             .hash = "122043cc2f29f16a0997820f8640463628c3ca9a4815a93113368b6dc726da7a4585",
         },
         .websocket = .{
-            .path = "checkouts/websocket.zig",
+            .url = "https://github.com/karlseguin/websocket.zig/archive/4deaaef2b4475a63f19c5e2f43e38fd55464b118.tar.gz",
+            .hash = "websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV",
         },
     },
     .paths = .{

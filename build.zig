@@ -134,6 +134,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const ndb_module = b.createModule(.{
+        .root_source_file = b.path("src/ndb.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        ndb_module.addIncludePath(b.path("src/override"));
+    }
+    ndb_module.addIncludePath(b.path("nostrdb/src"));
+    ndb_module.addIncludePath(b.path("nostrdb/src/bindings/c"));
+    ndb_module.addIncludePath(b.path("nostrdb/ccan"));
+    ndb_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    ndb_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    ndb_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    proto_module.addImport("ndb", ndb_module);
+
     const net_module = b.createModule(.{
         .root_source_file = b.path("net/lib.zig"),
         .target = target,
@@ -152,11 +168,35 @@ pub fn build(b: *std.Build) void {
     });
     megalith.root_module.addImport("proto", proto_module);
     megalith.root_module.addImport("net", net_module);
+    megalith.root_module.addImport("ndb", ndb_module);
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
     const megalith_step = b.step("megalith", "Build the Megalith CLI");
     megalith_step.dependOn(&install_megalith.step);
+
+    const ssr_demo = b.addExecutable(.{
+        .name = "ssr-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ssr/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    ssr_demo.root_module.addImport("ndb", ndb_module);
+    ssr_demo.root_module.addImport("proto", proto_module);
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        ssr_demo.root_module.addIncludePath(b.path("src/override"));
+    }
+    ssr_demo.root_module.addIncludePath(b.path("nostrdb/src"));
+    ssr_demo.root_module.addIncludePath(b.path("nostrdb/ccan"));
+    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    ssr_demo.linkLibrary(lib);
+    const install_ssr = b.addInstallArtifact(ssr_demo, .{});
+    const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
+    ssr_step.dependOn(&install_ssr.step);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
