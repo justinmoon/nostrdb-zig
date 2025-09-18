@@ -15,10 +15,10 @@ pub const ResponseBatch = struct {
 
 pub const RequestLog = struct {
     allocator: Allocator,
-    entries: std.ArrayList([]u8),
+    entries: std.array_list.Managed([]u8),
 
     pub fn init(allocator: Allocator) RequestLog {
-        return .{ .allocator = allocator, .entries = std.ArrayList([]u8).init(allocator) };
+        return .{ .allocator = allocator, .entries = std.array_list.Managed([]u8).init(allocator) };
     }
 
     pub fn deinit(self: *RequestLog) void {
@@ -59,7 +59,7 @@ pub const MockRelayServer = struct {
     started: bool = false,
 
     pub fn init(options: Options) !MockRelayServer {
-        var host_copy = try options.allocator.dupe(u8, options.host);
+        const host_copy = try options.allocator.dupe(u8, options.host);
         errdefer options.allocator.free(host_copy);
 
         var batches_copy = try options.allocator.alloc(BatchStorage, options.batches.len);
@@ -145,8 +145,8 @@ pub const MockRelayServer = struct {
                 self.subscription_id = sub_copy;
             }
 
-            if (self.parent.request_log) |log| {
-                try log.append(data);
+            if (self.parent.request_log) |request_capture| {
+                try request_capture.append(data);
             }
 
             if (self.responded) return;
@@ -188,16 +188,16 @@ pub const MockRelayServer = struct {
                 return RenderedText{ .data = template, .owned = false };
             }
 
-            var builder = std.ArrayList(u8).init(self.parent.allocator);
+            var builder = std.array_list.Managed(u8).init(self.parent.allocator);
             errdefer builder.deinit();
 
-            var start: usize = 0;
-            while (std.mem.indexOf(u8, template[start..], placeholder)) |pos| {
-                try builder.appendSlice(template[start .. start + pos]);
+            var text_start: usize = 0;
+            while (std.mem.indexOf(u8, template[text_start..], placeholder)) |pos| {
+                try builder.appendSlice(template[text_start .. text_start + pos]);
                 try builder.appendSlice(sub);
-                start += pos + placeholder.len;
+                text_start += pos + placeholder.len;
             }
-            try builder.appendSlice(template[start..]);
+            try builder.appendSlice(template[text_start..]);
 
             const owned = try builder.toOwnedSlice();
             builder.deinit();

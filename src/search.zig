@@ -1,6 +1,6 @@
 // Iterator-based search implementation for improved memory efficiency
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const ndb = @import("ndb.zig");
 
 /// Search iterator for lazy evaluation of profile search results

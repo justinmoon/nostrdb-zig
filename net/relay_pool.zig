@@ -15,14 +15,14 @@ pub const PoolError = error{
 pub const RelayPool = struct {
     allocator: Allocator,
     config: Config,
-    clients: std.ArrayList(*RelayClient),
+    clients: std.array_list.Managed(*RelayClient),
     subscriptions: std.StringHashMap(*RelayClient),
 
     pub fn init(config: Config) RelayPool {
         return .{
             .allocator = config.allocator,
             .config = config,
-            .clients = std.ArrayList(*RelayClient).init(config.allocator),
+            .clients = std.array_list.Managed(*RelayClient).init(config.allocator),
             .subscriptions = std.StringHashMap(*RelayClient).init(config.allocator),
         };
     }

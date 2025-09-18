@@ -134,6 +134,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const c_module = b.createModule(.{
+        .root_source_file = b.path("src/c.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    c_module.addIncludePath(b.path("nostrdb/src"));
+    c_module.addIncludePath(b.path("nostrdb/ccan"));
+    c_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    c_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    c_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        c_module.addIncludePath(b.path("src/override"));
+    }
+    proto_module.addImport("c", c_module);
     const ndb_module = b.createModule(.{
         .root_source_file = b.path("src/ndb.zig"),
         .target = target,
@@ -149,6 +163,7 @@ pub fn build(b: *std.Build) void {
     ndb_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     ndb_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     proto_module.addImport("ndb", ndb_module);
+    ndb_module.addImport("c", c_module);
 
     const net_module = b.createModule(.{
         .root_source_file = b.path("net/lib.zig"),
@@ -165,6 +180,7 @@ pub fn build(b: *std.Build) void {
     });
     contacts_module.addImport("proto", proto_module);
     contacts_module.addImport("net", net_module);
+    contacts_module.addImport("ndb", ndb_module);
 
     const timeline_module = b.createModule(.{
         .root_source_file = b.path("timeline/lib.zig"),
@@ -181,6 +197,7 @@ pub fn build(b: *std.Build) void {
     ingest_module.addImport("net", net_module);
     ingest_module.addImport("contacts", contacts_module);
     ingest_module.addImport("timeline", timeline_module);
+    ingest_module.addImport("ndb", ndb_module);
 
     const megalith = b.addExecutable(.{
         .name = "megalith",
@@ -244,6 +261,8 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("contacts", contacts_module);
     tests.root_module.addImport("timeline", timeline_module);
     tests.root_module.addImport("ingest", ingest_module);
+    tests.root_module.addImport("ndb", ndb_module);
+    tests.root_module.addImport("c", c_module);
     const proto_tests_module = b.createModule(.{
         .root_source_file = b.path("tests/proto_test.zig"),
         .target = target,
@@ -279,6 +298,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("ingest_tests", ingest_tests_module);
+
+    const cli_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/cli_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("cli_tests", cli_tests_module);
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");
     }

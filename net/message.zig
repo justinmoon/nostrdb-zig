@@ -131,7 +131,10 @@ pub const Parser = struct {
         const trimmed = std.mem.trim(u8, raw_copy, " \r\n\t");
         if (trimmed.len < 2) return ParseError.InvalidJson;
 
-        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, trimmed, .{});
+        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, trimmed, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ParseError.InvalidJson,
+        };
         defer parsed.deinit();
 
         const root = parsed.value;

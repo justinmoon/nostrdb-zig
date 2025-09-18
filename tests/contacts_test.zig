@@ -1,7 +1,7 @@
 const std = @import("std");
 const contacts = @import("contacts");
 const net = @import("net");
-const ndb = @import("root").ndb;
+const ndb = @import("ndb");
 const Response = net.MockRelayResponse;
 
 var port_seed: u16 = 38000;

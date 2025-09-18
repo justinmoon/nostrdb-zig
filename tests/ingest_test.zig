@@ -3,7 +3,7 @@ const net = @import("net");
 const contacts = @import("contacts");
 const timeline = @import("timeline");
 const ingest = @import("ingest");
-const ndb = @import("root").ndb;
+const ndb = @import("ndb");
 
 const Response = net.MockRelayResponse;
 const ResponseBatch = net.MockRelayResponseBatch;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const xev = @import("xev");
 const ndb = @import("ndb.zig");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const builtin = @import("builtin");
 
 // Platform detection for optimization

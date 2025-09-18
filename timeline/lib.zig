@@ -88,8 +88,11 @@ pub const Store = struct {
 
     pub fn ensureTimeline(self: *Store, npub: PubKey) !*Timeline {
         if (self.timelines.getPtr(npub)) |existing| return existing;
-        const gop = try self.timelines.put(npub, Timeline.init());
-        return gop.value_ptr;
+        const result = try self.timelines.getOrPut(npub);
+        if (!result.found_existing) {
+            result.value_ptr.* = Timeline.init();
+        }
+        return result.value_ptr;
     }
 };
 
@@ -109,7 +112,7 @@ pub fn insertEvent(
     }
 
     // Persist event record
-    var payload_copy = try store.allocator.dupe(u8, record_payload);
+    const payload_copy = try store.allocator.dupe(u8, record_payload);
     errdefer store.allocator.free(payload_copy);
 
     var record = EventRecord{
@@ -146,10 +149,14 @@ pub fn insertEvent(
 
     // Trim excess entries
     while (timeline.entries.items.len > store.max_entries) {
-        const removed = timeline.entries.pop();
-        if (store.events.events.fetchRemove(removed.event_id)) |kv| {
-            var rec = kv.value;
-            rec.deinit();
+        const removed_opt = timeline.entries.pop();
+        if (removed_opt) |removed| {
+            if (store.events.events.fetchRemove(removed.event_id)) |kv| {
+                var rec = kv.value;
+                rec.deinit();
+            }
+        } else {
+            break;
         }
     }
 

@@ -1,6 +1,7 @@
 const std = @import("std");
-pub const c = @import("c.zig").c;
+pub const c = @import("c").c;
 pub const profile = @import("profile.zig");
+pub const subscription_xev = @import("subscription_xev.zig");
 
 pub const Error = error{
     InitFailed,
@@ -85,8 +86,8 @@ pub const Ndb = struct {
         loop: anytype, // *xev.Loop
         filter: *Filter,
         num_filters: i32,
-    ) !@import("subscription_xev.zig").SubscriptionStream {
-        const xev_sub = @import("subscription_xev.zig");
+    ) !subscription_xev.SubscriptionStream {
+        const xev_sub = subscription_xev;
         const sub_id = self.subscribe(filter, num_filters);
         var stream = try xev_sub.SubscriptionStream.init(allocator, loop, self, sub_id);
         stream.start();

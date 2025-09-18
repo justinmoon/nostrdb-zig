@@ -3,7 +3,7 @@ const proto = @import("proto");
 const net = @import("net");
 const contacts = @import("contacts");
 const timeline = @import("timeline");
-const ndb = @import("../src/ndb.zig");
+const ndb = @import("ndb");
 
 const log = std.log.scoped(.ingest);
 
@@ -16,7 +16,7 @@ pub const EventMeta = struct {
     kind: u64,
 };
 
-pub const PipelineError = Allocator.Error || net.RelayClient.ConnectError || net.RelayClient.SendError || ndb.Error || proto.ReqBuilderError || proto.FilterError || timeline.InsertError || error{
+pub const PipelineError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || proto.FilterError || timeline.InsertError || error{
     NoFollowSet,
     CompletionTimeout,
     EventParseFailed,
@@ -51,7 +51,7 @@ pub const Pipeline = struct {
     pub fn run(self: *Pipeline, relays: []const []const u8) PipelineError!void {
         if (relays.len == 0) return;
 
-        var follows = try self.captureFollows();
+        const follows = try self.captureFollows();
         defer self.allocator.free(follows);
         if (follows.len == 0) return error.NoFollowSet;
 
@@ -59,10 +59,10 @@ pub const Pipeline = struct {
         defer follow_lookup.deinit();
 
         const initial_since = self.initialSince();
-        var filters = try self.buildFilters(follows, initial_since);
+        const filters = try self.buildFilters(follows, initial_since);
         defer self.freeFilters(filters);
 
-        var clients = try self.allocator.alloc(ClientState, relays.len);
+        const clients = try self.allocator.alloc(ClientState, relays.len);
         var initialized: usize = 0;
         errdefer {
             var idx: usize = 0;
@@ -84,7 +84,9 @@ pub const Pipeline = struct {
             var progressed = false;
             for (clients[0..initialized]) |*entry| {
                 if (entry.phase == .finished) continue;
-                const msg_opt = try entry.client.nextMessage(2_000);
+                const msg_opt = entry.client.nextMessage(2_000) catch |err| switch (err) {
+                    error.Timeout => null,
+                };
                 if (msg_opt) |msg| {
                     progressed = true;
                     try self.handleMessage(msg, &follow_lookup, entry);
@@ -156,8 +158,8 @@ pub const Pipeline = struct {
     fn onEose(self: *Pipeline, client: *ClientState, follow_lookup: *SelfFollowSet) PipelineError!void {
         switch (client.phase) {
             .initial => {
-                const since = self.timeline_store.latestCreatedAt(self.npub);
-                var filters = try self.buildFilters(follow_lookup.authors, since);
+                const since = timeline.latestCreatedAt(self.timeline_store, self.npub);
+                const filters = try self.buildFilters(follow_lookup.authors, since);
                 defer self.freeFilters(filters);
 
                 const close_frame = try proto.buildClose(self.allocator, client.sub_id);
@@ -177,7 +179,7 @@ pub const Pipeline = struct {
     }
 
     fn captureFollows(self: *Pipeline) Allocator.Error![]timeline.PubKey {
-        var array = std.ArrayList(timeline.PubKey).init(self.allocator);
+        var array = std.array_list.Managed(timeline.PubKey).init(self.allocator);
         errdefer array.deinit();
 
         if (self.contacts_store.get(self.npub)) |contact_list| {
@@ -236,7 +238,7 @@ const ClientState = struct {
 
         try client.connect(null);
 
-        var sub_id = try proto.nextSubId(allocator);
+        const sub_id = try proto.nextSubId(allocator);
         errdefer allocator.free(sub_id);
 
         const req = try buildRequest(allocator, sub_id, filters);
@@ -297,9 +299,10 @@ const SelfFollowSet = struct {
     }
 };
 
-fn parseEventMeta(allocator: Allocator, json: []const u8) error{EventParseFailed}!EventMeta {
-    var parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch {
-        return error.EventParseFailed;
+fn parseEventMeta(allocator: Allocator, json: []const u8) (Allocator.Error || error{EventParseFailed})!EventMeta {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.EventParseFailed,
     };
     defer parsed.deinit();
 
@@ -317,16 +320,14 @@ fn parseEventMeta(allocator: Allocator, json: []const u8) error{EventParseFailed
     const author = try hexToKey(author_field.string);
 
     const created_at = switch (created_field) {
-        .integer => |x| std.math.cast(u64, x) catch return error.EventParseFailed,
-        .float => |x| std.math.cast(u64, @intFromFloat(@floor(x))) catch return error.EventParseFailed,
+        .integer => |x| std.math.cast(u64, x) orelse return error.EventParseFailed,
         .string => |s| std.fmt.parseInt(u64, s, 10) catch return error.EventParseFailed,
         .number_string => |s| std.fmt.parseInt(u64, s, 10) catch return error.EventParseFailed,
         else => return error.EventParseFailed,
     };
 
     const kind = switch (kind_field) {
-        .integer => |x| std.math.cast(u64, x) catch return error.EventParseFailed,
-        .float => |x| std.math.cast(u64, @intFromFloat(@floor(x))) catch return error.EventParseFailed,
+        .integer => |x| std.math.cast(u64, x) orelse return error.EventParseFailed,
         .string => |s| std.fmt.parseInt(u64, s, 10) catch return error.EventParseFailed,
         .number_string => |s| std.fmt.parseInt(u64, s, 10) catch return error.EventParseFailed,
         else => return error.EventParseFailed,
@@ -338,8 +339,8 @@ fn parseEventMeta(allocator: Allocator, json: []const u8) error{EventParseFailed
 fn hexToKey(hex: []const u8) error{EventParseFailed}!timeline.EventId {
     if (hex.len != 64) return error.EventParseFailed;
     var out: timeline.EventId = undefined;
-    const written = std.fmt.hexToBytes(out[0..], hex) catch return error.EventParseFailed;
-    if (written != 32) return error.EventParseFailed;
+    const decoded = std.fmt.hexToBytes(out[0..], hex) catch return error.EventParseFailed;
+    if (decoded.len != 32) return error.EventParseFailed;
     return out;
 }
 
@@ -347,7 +348,7 @@ fn buildRequest(
     allocator: Allocator,
     sub_id: []const u8,
     filters: [][:0]const u8,
-) Allocator.Error![]u8 {
+) (Allocator.Error || proto.ReqBuilderError)![]u8 {
     var refs = try allocator.alloc([]const u8, filters.len);
     defer allocator.free(refs);
     for (filters, 0..) |filter, idx| {
