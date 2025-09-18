@@ -108,6 +108,7 @@ pub const MockRelayServer = struct {
         conn: *websocket.Conn,
         parent: *MockRelayServer,
         responded: bool = false,
+        subscription_id: ?[]u8 = null,
 
         pub fn init(h: *const websocket.Handshake, conn: *websocket.Conn, parent: *MockRelayServer) !Handler {
             _ = h;
@@ -115,7 +116,10 @@ pub const MockRelayServer = struct {
         }
 
         pub fn clientMessage(self: *Handler, allocator: Allocator, data: []const u8) !void {
-            _ = allocator;
+            if (self.subscription_id == null) {
+                const sub_copy = try extractSubId(self.parent.allocator, allocator, data);
+                self.subscription_id = sub_copy;
+            }
 
             if (self.responded) return;
             if (!std.mem.startsWith(u8, data, "[\"REQ")) return;
@@ -123,14 +127,43 @@ pub const MockRelayServer = struct {
             self.responded = true;
             for (self.parent.responses) |resp| {
                 switch (resp.tag) {
-                    .text => try self.conn.writeText(resp.data),
+                    .text => {
+                        const rendered = try self.renderText(resp.data);
+                        defer if (rendered.owned) self.parent.allocator.free(rendered.data);
+                        try self.conn.writeText(rendered.data);
+                    },
                     .binary => try self.conn.writeBin(resp.data),
                 }
             }
         }
 
         pub fn close(self: *Handler) void {
-            _ = self;
+            if (self.subscription_id) |sid| {
+                self.parent.allocator.free(sid);
+            }
+        }
+
+        fn renderText(self: *Handler, template: []const u8) Allocator.Error!RenderedText {
+            const sub = self.subscription_id orelse return RenderedText{ .data = template, .owned = false };
+            const placeholder = "{SUB_ID}";
+            if (std.mem.indexOf(u8, template, placeholder) == null) {
+                return RenderedText{ .data = template, .owned = false };
+            }
+
+            var builder = std.ArrayList(u8).init(self.parent.allocator);
+            errdefer builder.deinit();
+
+            var start: usize = 0;
+            while (std.mem.indexOf(u8, template[start..], placeholder)) |pos| {
+                try builder.appendSlice(template[start .. start + pos]);
+                try builder.appendSlice(sub);
+                start += pos + placeholder.len;
+            }
+            try builder.appendSlice(template[start..]);
+
+            const owned = try builder.toOwnedSlice();
+            builder.deinit();
+            return RenderedText{ .data = owned, .owned = true };
         }
     };
 };
@@ -139,3 +172,22 @@ const ResponseStorage = struct {
     tag: enum { text, binary },
     data: []u8,
 };
+
+const RenderedText = struct {
+    data: []const u8,
+    owned: bool,
+};
+
+const ExtractError = error{InvalidRequest};
+
+fn extractSubId(dest_allocator: Allocator, temp_allocator: Allocator, request: []const u8) (Allocator.Error || ExtractError)![]u8 {
+    var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, request, .{});
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .array) return ExtractError.InvalidRequest;
+    const arr = root.array.items;
+    if (arr.len < 2) return ExtractError.InvalidRequest;
+    if (arr[1] != .string) return ExtractError.InvalidRequest;
+    return try dest_allocator.dupe(u8, arr[1].string);
+}

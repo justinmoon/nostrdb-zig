@@ -5,6 +5,7 @@ const ndb = @import("ndb.zig");
 test {
     _ = @import("proto_tests");
     _ = @import("net_tests");
+    _ = @import("contacts_tests");
     _ = @import("test_phase5.zig");
 }
 

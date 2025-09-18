@@ -142,6 +142,14 @@ pub fn build(b: *std.Build) void {
     net_module.addImport("xev", xev.module("xev"));
     net_module.addImport("websocket", websocket_pkg.module("websocket"));
 
+    const contacts_module = b.createModule(.{
+        .root_source_file = b.path("contacts/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    contacts_module.addImport("proto", proto_module);
+    contacts_module.addImport("net", net_module);
+
     const megalith = b.addExecutable(.{
         .name = "megalith",
         .root_module = b.createModule(.{
@@ -152,6 +160,7 @@ pub fn build(b: *std.Build) void {
     });
     megalith.root_module.addImport("proto", proto_module);
     megalith.root_module.addImport("net", net_module);
+    megalith.root_module.addImport("contacts", contacts_module);
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
@@ -174,6 +183,7 @@ pub fn build(b: *std.Build) void {
     tests.linkLibrary(lib);
     tests.root_module.addImport("proto", proto_module);
     tests.root_module.addImport("net", net_module);
+    tests.root_module.addImport("contacts", contacts_module);
     const proto_tests_module = b.createModule(.{
         .root_source_file = b.path("tests/proto_test.zig"),
         .target = target,
@@ -188,6 +198,13 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("net_tests", net_tests_module);
     tests.root_module.addImport("xev", xev.module("xev"));
     tests.root_module.addImport("websocket", websocket_pkg.module("websocket"));
+
+    const contacts_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/contacts_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("contacts_tests", contacts_tests_module);
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");
     }
