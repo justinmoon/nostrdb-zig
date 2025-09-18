@@ -118,11 +118,29 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // Add libxev dependency (used by net module and tests)
+    const xev = b.dependency("libxev", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const websocket_pkg = b.dependency("websocket", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const proto_module = b.createModule(.{
         .root_source_file = b.path("proto/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    const net_module = b.createModule(.{
+        .root_source_file = b.path("net/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    net_module.addImport("xev", xev.module("xev"));
+    net_module.addImport("websocket", websocket_pkg.module("websocket"));
 
     const megalith = b.addExecutable(.{
         .name = "megalith",
@@ -133,17 +151,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
     megalith.root_module.addImport("proto", proto_module);
+    megalith.root_module.addImport("net", net_module);
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
     const megalith_step = b.step("megalith", "Build the Megalith CLI");
     megalith_step.dependOn(&install_megalith.step);
-
-    // Add libxev dependency
-    const xev = b.dependency("libxev", .{
-        .target = target,
-        .optimize = optimize,
-    });
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
@@ -160,13 +173,21 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     tests.linkLibrary(lib);
     tests.root_module.addImport("proto", proto_module);
+    tests.root_module.addImport("net", net_module);
     const proto_tests_module = b.createModule(.{
         .root_source_file = b.path("tests/proto_test.zig"),
         .target = target,
         .optimize = optimize,
     });
     tests.root_module.addImport("proto_tests", proto_tests_module);
+    const net_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/net_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("net_tests", net_tests_module);
     tests.root_module.addImport("xev", xev.module("xev"));
+    tests.root_module.addImport("websocket", websocket_pkg.module("websocket"));
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");
     }

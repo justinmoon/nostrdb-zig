@@ -4,6 +4,7 @@ const ndb = @import("ndb.zig");
 // Import Phase 5 tests
 test {
     _ = @import("proto_tests");
+    _ = @import("net_tests");
     _ = @import("test_phase5.zig");
 }
 
@@ -108,9 +109,9 @@ test "Test 5: get note by ID" {
     const ev = "[\"EVENT\",\"s\",{\"id\": \"0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930\",\"pubkey\": \"aeadd3bf2fd92e509e137c9e8bdf20e99f286b90be7692434e03c015e1d3bbfe\",\"created_at\": 1704401597,\"kind\": 1,\"tags\": [],\"content\": \"hello\",\"sig\": \"232395427153b693e0426b93d89a8319324d8657e67d23953f014a22159d2127b4da20b95644b3e34debd5e20be0401c283e7308ccb63c1c1e0f81cac7502f09\"}]";
     try db.processEvent(ev);
 
-    // Ensure background writer flushed 
+    // Ensure background writer flushed
     db.ensureProcessed(200);
-    
+
     var id_bytes: [32]u8 = undefined;
     try ndb.hexTo32(&id_bytes, id_hex);
 
@@ -194,10 +195,10 @@ test "Test 6b: query with large result set uses allocator" {
     var f_small = try ndb.Filter.init();
     defer f_small.deinit();
     try f_small.kinds(&.{1});
-    
+
     var small_results: [10]ndb.QueryResult = undefined;
     var small_filters = [_]ndb.Filter{f_small};
-    
+
     // This should work without allocator (uses stack)
     const n_small = try ndb.query(&txn, small_filters[0..], small_results[0..]);
     try std.testing.expectEqual(@as(usize, 0), n_small); // No events yet
@@ -206,10 +207,10 @@ test "Test 6b: query with large result set uses allocator" {
     var f_large = try ndb.Filter.init();
     defer f_large.deinit();
     try f_large.kinds(&.{1});
-    
+
     var large_results: [100]ndb.QueryResult = undefined;
     var large_filters = [_]ndb.Filter{f_large};
-    
+
     // This should still work as 100 > 64 but we pass the allocator
     const n_large = try ndb.queryWithAllocator(&txn, large_filters[0..], large_results[0..], alloc);
     try std.testing.expectEqual(@as(usize, 0), n_large);
@@ -295,9 +296,9 @@ test "Test 11: filter_multiple_field_iter_works" {
 
     var id1: [32]u8 = undefined;
     try ndb.hexTo32(&id1, "0336948bdfbf5f939802eba03aa78735c82825211eece987a6d2e20e3cfff930");
-    _ = try b.kinds(&.{ 1 });
+    _ = try b.kinds(&.{1});
     _ = try b.limit(5);
-    _ = try b.event(&.{ id1 });
+    _ = try b.event(&.{id1});
     try b.build();
 
     // Find kinds, limit, and e-tag fields exist
@@ -576,12 +577,12 @@ test "Test 16: profile_record_works" {
     defer db.deinit();
 
     // Process a profile event (kind 0)
-    const profile_event = 
+    const profile_event =
         \\["EVENT","nostril-query",{"content":"{\"nip05\":\"_@jb55.com\",\"website\":\"https://damus.io\",\"name\":\"jb55\",\"about\":\"I made damus, npubs and zaps. banned by apple & the ccp. my notes are not for sale.\",\"lud16\":\"jb55@sendsats.lol\",\"banner\":\"https://nostr.build/i/3d6f22d45d95ecc2c19b1acdec57aa15f2dba9c423b536e26fc62707c125f557.jpg\",\"display_name\":\"Will\",\"picture\":\"https://cdn.jb55.com/img/red-me.jpg\"}","created_at":1700855305,"id":"cad04d11f7fa9c36d57400baca198582dfeb94fa138366c4469e58da9ed60051","kind":0,"pubkey":"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245","sig":"7a15e379ff27318460172b4a1d55a13e064c5007d05d5a188e7f60e244a9ed08996cb7676058b88c7a91ae9488f8edc719bc966cb5bf1eb99be44cdb745f915f","tags":[]}]
     ;
-    
+
     try db.processEvent(profile_event);
-    
+
     // Wait for background indexing to complete
     db.ensureProcessed(200);
 
@@ -592,7 +593,7 @@ test "Test 16: profile_record_works" {
     var pk: [32]u8 = undefined;
     try ndb.hexTo32(&pk, "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245");
     const pr = try ndb.getProfileByPubkeyFree(&txn, &pk);
-    
+
     // Check the profile fields
     const name = try pr.name();
     try std.testing.expect(name != null);
@@ -626,55 +627,55 @@ test "ProfileRecord returns TransactionEnded error after transaction ends" {
     defer db.deinit();
 
     // Process a profile event (kind 0)
-    const profile_event = 
+    const profile_event =
         \\["EVENT","nostril-query",{"content":"{\"nip05\":\"_@jb55.com\",\"website\":\"https://damus.io\",\"name\":\"jb55\",\"about\":\"I made damus, npubs and zaps. banned by apple & the ccp. my notes are not for sale.\",\"lud16\":\"jb55@sendsats.lol\",\"banner\":\"https://nostr.build/i/3d6f22d45d95ecc2c19b1acdec57aa15f2dba9c423b536e26fc62707c125f557.jpg\",\"display_name\":\"Will\",\"picture\":\"https://cdn.jb55.com/img/red-me.jpg\"}","created_at":1700855305,"id":"cad04d11f7fa9c36d57400baca198582dfeb94fa138366c4469e58da9ed60051","kind":0,"pubkey":"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245","sig":"7a15e379ff27318460172b4a1d55a13e064c5007d05d5a188e7f60e244a9ed08996cb7676058b88c7a91ae9488f8edc719bc966cb5bf1eb99be44cdb745f915f","tags":[]}]
     ;
-    
+
     try db.processEvent(profile_event);
-    
+
     // Wait for background indexing to complete
     db.ensureProcessed(200);
 
     var pk: [32]u8 = undefined;
     try ndb.hexTo32(&pk, "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245");
-    
+
     // Get profile within a transaction
     var pr: ndb.profile.ProfileRecord = undefined;
     {
         var txn = try ndb.Transaction.begin(&db);
         defer txn.end();
-        
+
         pr = try ndb.getProfileByPubkeyFree(&txn, &pk);
-        
+
         // Verify we can access the profile while transaction is active
         const name = try pr.name();
         try std.testing.expect(name != null);
         try std.testing.expectEqualStrings("jb55", name.?);
     }
     // Transaction is now ended
-    
+
     // Trying to access profile data should return TransactionEnded error
     const name_result = pr.name();
     try std.testing.expectError(ndb.Error.TransactionEnded, name_result);
-    
+
     const display_result = pr.displayName();
     try std.testing.expectError(ndb.Error.TransactionEnded, display_result);
-    
+
     const about_result = pr.about();
     try std.testing.expectError(ndb.Error.TransactionEnded, about_result);
-    
+
     const website_result = pr.website();
     try std.testing.expectError(ndb.Error.TransactionEnded, website_result);
-    
+
     const note_key_result = pr.noteKey();
     try std.testing.expectError(ndb.Error.TransactionEnded, note_key_result);
-    
+
     const reactions_result = pr.reactions();
     try std.testing.expectError(ndb.Error.TransactionEnded, reactions_result);
-    
+
     const donation_result = pr.damusDonation();
     try std.testing.expectError(ndb.Error.TransactionEnded, donation_result);
-    
+
     // Demonstrate proper error handling pattern
     const handled_name = pr.name() catch |err| switch (err) {
         ndb.Error.TransactionEnded => blk: {
@@ -724,7 +725,7 @@ test "ProfileRecord rejects invalid flatbuffer data" {
         // Set root offset to 100, but buffer is only 8 bytes
         std.mem.writeInt(u32, bad_offset[0..4], 100, .little);
         std.mem.writeInt(u32, bad_offset[4..8], 0, .little);
-        
+
         var pr = ndb.profile.ProfileRecord{
             .ptr = &bad_offset,
             .len = bad_offset.len,
@@ -744,7 +745,7 @@ test "ProfileRecord rejects invalid flatbuffer data" {
         std.mem.writeInt(u32, bad_vtable[4..8], 0, .little);
         // Vtable offset (positive = invalid)
         std.mem.writeInt(i32, bad_vtable[8..12], 10, .little);
-        
+
         var pr = ndb.profile.ProfileRecord{
             .ptr = &bad_vtable,
             .len = bad_vtable.len,
@@ -760,7 +761,7 @@ test "ProfileRecord rejects invalid flatbuffer data" {
         var random_data: [100]u8 = undefined;
         var prng = std.Random.DefaultPrng.init(12345);
         prng.random().bytes(&random_data);
-        
+
         var pr = ndb.profile.ProfileRecord{
             .ptr = &random_data,
             .len = random_data.len,
@@ -829,15 +830,15 @@ test "search_profile_works" {
     _ = try filter_builder.kinds(&[_]u64{0});
     _ = try filter_builder.build();
     var filters = [_]ndb.Filter{filter};
-    
+
     const sub = db.subscribe(&filters[0], @intCast(filters.len));
     // No unsubscribe in current implementation
 
     // Process Derek Ross profile event
-    const derek_event = 
+    const derek_event =
         \\["EVENT","b",{  "id": "0b9f0e14727733e430dcb00c69b12a76a1e100f419ce369df837f7eb33e4523c",  "pubkey": "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24",  "created_at": 1736785355,  "kind": 0,  "tags": [    [      "alt",      "User profile for Derek Ross"    ],    [      "i",      "twitter:derekmross",      "1634343988407726081"    ],    [      "i",      "github:derekross",      "3edaf845975fa4500496a15039323fa3I"    ]  ],  "content": "{\"about\":\"Building NostrPlebs.com and NostrNests.com. The purple pill helps the orange pill go down. Nostr is the social glue that binds all of your apps together.\",\"banner\":\"https://i.nostr.build/O2JE.jpg\",\"display_name\":\"Derek Ross\",\"lud16\":\"derekross@strike.me\",\"name\":\"Derek Ross\",\"nip05\":\"derekross@nostrplebs.com\",\"picture\":\"https://i.nostr.build/MVIJ6OOFSUzzjVEc.jpg\",\"website\":\"https://nostrplebs.com\",\"created_at\":1707238393}",  "sig": "51e1225ccaf9b6739861dc218ac29045b09d5cf3a51b0ac6ea64bd36827d2d4394244e5f58a4e4a324c84eeda060e1a27e267e0d536e5a0e45b0b6bdc2c43bbc"}]
     ;
-    
+
     // Process KernelKind profile event
     const kernel_event =
         \\["EVENT","b",{  "id": "232a02ec7e1b2febf85370b52ed49bf34e2701c385c3d563511508dcf0767bcf",  "pubkey": "4a0510f26880d40e432f4865cb5714d9d3c200ca6ebb16b418ae6c555f574967",  "created_at": 1736017863,  "kind": 0,  "tags": [    [      "client",      "Damus Notedeck"    ]  ],  "content": "{\"display_name\":\"KernelKind\",\"name\":\"KernelKind\",\"about\":\"hello from notedeck!\",\"lud16\":\"kernelkind@getalby.com\"}",  "sig": "18c7dea0da3c30677d6822a31a6dfd9ebc02a18a31d69f0f2ac9ba88409e437d3db0ac433639111df1e4948a6d18451d1582173ee4fcd018d0ec92939f2c1506"}]
@@ -845,7 +846,7 @@ test "search_profile_works" {
 
     try db.processEvent(derek_event);
     try db.processEvent(kernel_event);
-    
+
     // Wait for processing and poll notes
     std.Thread.sleep(500 * std.time.ns_per_ms);
     var note_ids: [2]u64 = undefined;
@@ -859,9 +860,9 @@ test "search_profile_works" {
     {
         const results = try ndb.searchProfileFree(&txn, "kernel", 1, allocator);
         defer allocator.free(results);
-        
+
         try std.testing.expect(results.len >= 1);
-        
+
         const expected_kernelkind_bytes = [32]u8{
             0x4a, 0x05, 0x10, 0xf2, 0x68, 0x80, 0xd4, 0x0e, 0x43, 0x2f, 0x48, 0x65, 0xcb, 0x57,
             0x14, 0xd9, 0xd3, 0xc2, 0x00, 0xca, 0x6e, 0xbb, 0x16, 0xb4, 0x18, 0xae, 0x6c, 0x55,
@@ -874,9 +875,9 @@ test "search_profile_works" {
     {
         const results = try ndb.searchProfileFree(&txn, "Derek", 1, allocator);
         defer allocator.free(results);
-        
+
         try std.testing.expect(results.len >= 1);
-        
+
         const expected_derek_bytes = [32]u8{
             0x3f, 0x77, 0x0d, 0x65, 0xd3, 0xa7, 0x64, 0xa9, 0xc5, 0xcb, 0x50, 0x3a, 0xe1, 0x23,
             0xe6, 0x2e, 0xc7, 0x59, 0x8a, 0xd0, 0x35, 0xd8, 0x36, 0xe2, 0xa8, 0x10, 0xf3, 0x87,
