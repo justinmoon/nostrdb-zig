@@ -150,6 +150,22 @@ pub fn build(b: *std.Build) void {
     contacts_module.addImport("proto", proto_module);
     contacts_module.addImport("net", net_module);
 
+    const timeline_module = b.createModule(.{
+        .root_source_file = b.path("timeline/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ingest_module = b.createModule(.{
+        .root_source_file = b.path("ingest/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    ingest_module.addImport("proto", proto_module);
+    ingest_module.addImport("net", net_module);
+    ingest_module.addImport("contacts", contacts_module);
+    ingest_module.addImport("timeline", timeline_module);
+
     const megalith = b.addExecutable(.{
         .name = "megalith",
         .root_module = b.createModule(.{
@@ -161,6 +177,8 @@ pub fn build(b: *std.Build) void {
     megalith.root_module.addImport("proto", proto_module);
     megalith.root_module.addImport("net", net_module);
     megalith.root_module.addImport("contacts", contacts_module);
+    megalith.root_module.addImport("timeline", timeline_module);
+    megalith.root_module.addImport("ingest", ingest_module);
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
@@ -184,6 +202,8 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("proto", proto_module);
     tests.root_module.addImport("net", net_module);
     tests.root_module.addImport("contacts", contacts_module);
+    tests.root_module.addImport("timeline", timeline_module);
+    tests.root_module.addImport("ingest", ingest_module);
     const proto_tests_module = b.createModule(.{
         .root_source_file = b.path("tests/proto_test.zig"),
         .target = target,
@@ -205,6 +225,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("contacts_tests", contacts_tests_module);
+
+    const timeline_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/timeline_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("timeline_tests", timeline_tests_module);
+
+    const ingest_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/ingest_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("ingest_tests", ingest_tests_module);
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");
     }

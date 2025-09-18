@@ -6,6 +6,8 @@ test {
     _ = @import("proto_tests");
     _ = @import("net_tests");
     _ = @import("contacts_tests");
+    _ = @import("timeline_tests");
+    _ = @import("ingest_tests");
     _ = @import("test_phase5.zig");
 }
 

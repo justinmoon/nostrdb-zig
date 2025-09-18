@@ -90,6 +90,9 @@ Implement
   - After contacts EOSE, build posts filters via proto; REQ to all relays.
   - On posts EOSE per relay, open live REQ with `since = latest_created_at`.
 
+Notes
+- Current MockRelay implementation replays a fixed sequence of responses. Live “since” REQ paths are exercised by code but not yet validated against a second request/response cycle; expand mock behaviour in Phase 5 when live streaming logic matures.
+
 Acceptance (tests to port/build)
 - Port go‑nostr event vectors (~/code/go-nostr/event_test.go):
   - Valid events pass; invalid signatures are rejected by nostrdb (assert not inserted into timeline).
@@ -158,4 +161,3 @@ Acceptance
 - nostrdb‑zig remains the ingestion core; no API changes needed for MVP.
 - We rely on nostrdb for signature/id validation; tests assert rejected events do not reach the timeline.
 - SSR layer is out of scope here; the timeline KV and event store are designed to be consumed by SSR quickly.
-

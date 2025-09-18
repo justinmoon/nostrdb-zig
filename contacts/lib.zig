@@ -1,5 +1,10 @@
 const std = @import("std");
 const ascii = std.ascii;
+const proto = @import("proto");
+const net = @import("net");
+const ndb = @import("../src/ndb.zig");
+
+const log = std.log.scoped(.contacts);
 
 pub const Allocator = std.mem.Allocator;
 
