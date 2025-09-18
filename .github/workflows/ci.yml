@@ -44,13 +44,12 @@ jobs:
 
       - name: Auto-merge PR
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Load PAT from local file on runner (fallback to secret if present)
-          if [ -z "${GH_TOKEN:-}" ]; then
-            export GH_TOKEN="$(grep -E '^(gh(p|s|u)p?_?|github_pat_)' ~/configs/secrets/github-pat.txt | head -n1 | tr -d '\r\n')"
-          fi
           echo "Auto-merging PR #${{ github.event.pull_request.number }}"
           gh pr merge ${{ github.event.pull_request.number }} \
             --repo ${{ github.repository }} \
             --squash \
-            --delete-branch
+            --delete-branch \
+            --auto
