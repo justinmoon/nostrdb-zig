@@ -60,7 +60,7 @@ pub const SubscriptionStream = struct {
     loop: *xev.Loop,
     ctx: *SubscriptionContext,
     timer: xev.Timer,
-    
+
     // Platform-specific: macOS needs alternating completions
     // Linux can potentially reuse a single completion
     completions: if (is_macos) [2]xev.Completion else [1]xev.Completion,
@@ -83,12 +83,12 @@ pub const SubscriptionStream = struct {
             .completions = undefined,
             .current_completion = 0,
         };
-        
+
         // Initialize completions
         for (&stream.completions) |*comp| {
             comp.* = .{};
         }
-        
+
         return stream;
     }
 
@@ -104,11 +104,11 @@ pub const SubscriptionStream = struct {
     pub fn start(self: *SubscriptionStream) void {
         self.scheduleNextPoll();
     }
-    
+
     /// Schedule the next poll with platform-appropriate completion handling
     fn scheduleNextPoll(self: *SubscriptionStream) void {
         const comp = &self.completions[self.current_completion];
-        
+
         self.timer.run(
             self.loop,
             comp,
@@ -225,7 +225,7 @@ pub const SubscriptionStream = struct {
     /// Cancel the subscription
     pub fn cancel(self: *SubscriptionStream) void {
         self.ctx.active = false;
-        
+
         // Note: Timer cancellation can be tricky on different platforms
         // For now, just mark as inactive and let it disarm naturally
     }
@@ -286,7 +286,7 @@ pub fn waitForNotesSync(
 ) !u64 {
     const start = std.time.milliTimestamp();
     var notes_buf: [256]u64 = undefined;
-    
+
     while (std.time.milliTimestamp() - start < timeout_ms) {
         const count = db.pollForNotes(sub_id, &notes_buf);
         if (count > 0) {
@@ -294,6 +294,6 @@ pub fn waitForNotesSync(
         }
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
-    
+
     return error.Timeout;
 }

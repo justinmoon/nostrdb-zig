@@ -100,36 +100,36 @@ pub const Ndb = struct {
         var total: usize = 0;
         const start_time = std.time.milliTimestamp();
         var polls: usize = 0;
-        
+
         while (total < target_count) {
             const remaining = target_count - total;
             const batch_size = @min(remaining, ids_buf.len);
-            
+
             // Try polling first (non-blocking)
             const got = self.pollForNotes(subid, ids_buf[0..batch_size]);
-            
+
             if (got > 0) {
                 total += @intCast(got);
                 polls = 0; // Reset poll counter on success
                 continue;
             }
-            
+
             polls += 1;
-            
+
             // Check timeout
             const elapsed = std.time.milliTimestamp() - start_time;
             if (elapsed > timeout_ms or polls > 200) {
                 // Return what we have so far
                 return total;
             }
-            
+
             // Small sleep then retry poll
             std.Thread.sleep(10 * std.time.ns_per_ms);
         }
-        
+
         return total;
     }
-    
+
     /// Ensure background writer has processed pending events
     /// This is a workaround - ideally nostrdb would expose a flush method
     pub fn ensureProcessed(self: *Ndb, timeout_ms: u64) void {
@@ -141,21 +141,21 @@ pub const Ndb = struct {
         // Give it a moment to actually write
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
-    
+
     /// Get a profile by its public key
     /// Matches Rust API: get_profile_by_pubkey(&self, transaction, pubkey)
     pub fn getProfileByPubkey(self: *Ndb, txn: *Transaction, pubkey: *const [32]u8) !profile.ProfileRecord {
         _ = self; // Method is on Ndb for API consistency
         return getProfileByPubkeyFree(txn, pubkey);
     }
-    
+
     /// Get a note by its ID
     /// Matches Rust API: get_note_by_id(&self, transaction, id)
     pub fn getNoteById(self: *Ndb, txn: *Transaction, id: *const [32]u8) ?Note {
         _ = self; // Method is on Ndb for API consistency
         return getNoteByIdFree(txn, id);
     }
-    
+
     /// Search for profiles matching the query string
     /// Returns references to pubkeys that are valid for the transaction lifetime
     /// This matches the Rust API: search_profile(&self, transaction, search, limit)
@@ -163,7 +163,7 @@ pub const Ndb = struct {
         _ = self; // Method is on Ndb for API consistency with Rust
         return searchProfileFree(txn, search, limit, allocator);
     }
-    
+
     /// Search for profiles using an iterator (memory efficient)
     /// Similar to Rust's zero-copy approach but adapted for Zig
     pub fn searchProfileIter(self: *Ndb, txn: *Transaction, search: []const u8, allocator: std.mem.Allocator) !ProfileSearchIterator {
@@ -181,7 +181,7 @@ pub const Transaction = struct {
     is_valid: bool = false,
 
     pub fn begin(ndb: *Ndb) !Transaction {
-        var txn: Transaction = .{ 
+        var txn: Transaction = .{
             .inner = undefined,
             .is_valid = true,
         };
@@ -194,7 +194,7 @@ pub const Transaction = struct {
         self.is_valid = false;
         _ = c.ndb_end_query(&self.inner);
     }
-    
+
     pub fn ensureValid(self: Transaction) !void {
         if (!self.is_valid) return Error.TransactionEnded;
     }
@@ -405,7 +405,7 @@ pub fn getProfileByPubkeyFree(txn: *Transaction, pubkey: *const [32]u8) !profile
     var primkey: u64 = 0;
     const profile_ptr = c.ndb_get_profile_by_pubkey(&txn.inner, &pubkey[0], &len, &primkey);
     if (profile_ptr == null) return Error.NotFound;
-    
+
     return profile.ProfileRecord{
         .ptr = profile_ptr.?,
         .len = len,
@@ -443,16 +443,16 @@ pub fn query(txn: *Transaction, filters: []Filter, results_out: []QueryResult) !
 /// For larger queries, requires an allocator to be passed
 pub fn queryWithAllocator(txn: *Transaction, filters: []Filter, results_out: []QueryResult, allocator: ?std.mem.Allocator) !usize {
     var count: c_int = 0;
-    
+
     // Stack allocation for common cases
     const MAX_STACK_RESULTS = 64;
     const MAX_STACK_FILTERS = 8;
-    
+
     // Handle results allocation
     var stack_results: [MAX_STACK_RESULTS]c.struct_ndb_query_result = undefined;
     var heap_results: ?[]c.struct_ndb_query_result = null;
     defer if (heap_results) |h| allocator.?.free(h);
-    
+
     const c_results = if (results_out.len <= MAX_STACK_RESULTS)
         stack_results[0..results_out.len]
     else blk: {
@@ -460,12 +460,12 @@ pub fn queryWithAllocator(txn: *Transaction, filters: []Filter, results_out: []Q
         heap_results = try allocator.?.alloc(c.struct_ndb_query_result, results_out.len);
         break :blk heap_results.?;
     };
-    
+
     // Handle filters allocation
     var stack_filters: [MAX_STACK_FILTERS]c.struct_ndb_filter = undefined;
     var heap_filters: ?[]c.struct_ndb_filter = null;
     defer if (heap_filters) |h| allocator.?.free(h);
-    
+
     const tmp_filters = if (filters.len <= MAX_STACK_FILTERS)
         stack_filters[0..filters.len]
     else blk: {
@@ -473,7 +473,7 @@ pub fn queryWithAllocator(txn: *Transaction, filters: []Filter, results_out: []Q
         heap_filters = try allocator.?.alloc(c.struct_ndb_filter, filters.len);
         break :blk heap_filters.?;
     };
-    
+
     for (filters, 0..) |f, i| tmp_filters[i] = f.inner;
 
     const ok = c.ndb_query(&txn.inner, &tmp_filters[0], @intCast(tmp_filters.len), &c_results[0], @intCast(c_results.len), &count);
@@ -506,13 +506,10 @@ pub const NoteBuilder = struct {
         // Use c_allocator (which wraps malloc/free) like nostrdb-rs
         // FIXME: allocator parameter is ignored; kept for API symmetry.
         _ = allocator;
-        
-        var nb: NoteBuilder = .{ 
-            .builder = undefined, 
-            .buf = try std.heap.c_allocator.alloc(u8, buf_size)
-        };
+
+        var nb: NoteBuilder = .{ .builder = undefined, .buf = try std.heap.c_allocator.alloc(u8, buf_size) };
         errdefer std.heap.c_allocator.free(nb.buf);
-        
+
         if (c.ndb_builder_init(&nb.builder, nb.buf.ptr, nb.buf.len) == 0) {
             std.heap.c_allocator.free(nb.buf);
             return Error.QueryFailed;
