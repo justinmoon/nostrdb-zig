@@ -14,5 +14,8 @@ openmls_traits = { path = "../../checkouts/openmls/traits", version = "0.4.0" }
 openmls_basic_credential = { path = "../../checkouts/openmls/basic_credential", version = "0.4.0" }
 thiserror = "1"
 
+[build-dependencies]
+cbindgen = "0.26"
+
 [dev-dependencies]
 serial_test = "3"
