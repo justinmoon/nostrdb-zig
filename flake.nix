@@ -27,6 +27,7 @@
           gnumake
           gcc
           cmake
+          stdenv.cc
           # Git for fetching submodules
           git
           # For macOS framework linking
@@ -138,10 +139,16 @@
           nativeBuildInputs = devDeps;
           
           buildPhase = ''
+            # Clone nostrdb locally for the build
+            git clone https://github.com/damus-io/nostrdb.git --depth 1
+            cd nostrdb
+            git submodule update --init --recursive --depth 1
+            cd ..
+            
             # Build with release optimization
             zig build -Doptimize=ReleaseSafe --prefix $out
             
-            # Also build megalith CLI
+            # Also build megalith CLI  
             zig build megalith -Doptimize=ReleaseSafe --prefix $out
           '';
           
