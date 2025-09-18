@@ -18,6 +18,11 @@ typedef struct OpenmlsFfiBuffer {
   uintptr_t len;
 } OpenmlsFfiBuffer;
 
+typedef struct OpenmlsExtensionInput {
+  uint16_t extension_type;
+  struct OpenmlsFfiBuffer data;
+} OpenmlsExtensionInput;
+
 #define OPENMLS_STATUS_OK 0
 
 #define OPENMLS_STATUS_ERROR 1
@@ -65,5 +70,20 @@ openmls_status_t openmls_ffi_key_package_create(void *provider,
                                                 uintptr_t extension_len,
                                                 bool mark_as_last_resort,
                                                 struct OpenmlsFfiBuffer *out_key_package);
+
+openmls_status_t openmls_ffi_group_create(void *provider,
+                                          const char *creator_identity_hex,
+                                          uint16_t ciphersuite_value,
+                                          const uint16_t *required_extension_types,
+                                          uintptr_t required_extension_len,
+                                          const struct OpenmlsExtensionInput *additional_extensions,
+                                          uintptr_t additional_extensions_len,
+                                          const struct OpenmlsFfiBuffer *key_packages,
+                                          uintptr_t key_package_len,
+                                          bool use_ratchet_tree_extension,
+                                          struct OpenmlsFfiBuffer *out_group_id,
+                                          struct OpenmlsFfiBuffer *out_commit_message,
+                                          struct OpenmlsFfiBuffer *out_welcome_message,
+                                          struct OpenmlsFfiBuffer *out_group_info);
 
 #endif /* OPENMLS_FFI_H */

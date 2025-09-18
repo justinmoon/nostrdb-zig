@@ -22,18 +22,19 @@ int main(void) {
         return (int)status;
     }
 
-    const char *identity = "884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6";
+    const char *alice_identity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const char *bob_identity = "884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6";
     uint16_t ciphersuite = 0x0001; /* MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 */
-    OpenmlsFfiBuffer key_package = {0};
+    OpenmlsFfiBuffer bob_key_package = {0};
 
     status = openmls_ffi_key_package_create(
         provider,
-        identity,
+        bob_identity,
         ciphersuite,
         NULL,
         0,
         true,
-        &key_package
+        &bob_key_package
     );
 
     if (status != OPENMLS_STATUS_OK) {
@@ -42,8 +43,46 @@ int main(void) {
         return (int)status;
     }
 
-    printf("key package produced with %zu bytes\n", key_package.len);
-    openmls_ffi_buffer_free(key_package);
+    printf("key package produced with %zu bytes\n", bob_key_package.len);
+
+    OpenmlsFfiBuffer group_id = {0};
+    OpenmlsFfiBuffer commit_message = {0};
+    OpenmlsFfiBuffer welcome_message = {0};
+    OpenmlsFfiBuffer group_info = {0};
+
+    status = openmls_ffi_group_create(
+        provider,
+        alice_identity,
+        ciphersuite,
+        NULL,
+        0,
+        NULL,
+        0,
+        &bob_key_package,
+        1,
+        true,
+        &group_id,
+        &commit_message,
+        &welcome_message,
+        &group_info
+    );
+
+    if (status != OPENMLS_STATUS_OK) {
+        fprintf(stderr, "group creation failed: %d\n", status);
+        openmls_ffi_buffer_free(bob_key_package);
+        openmls_ffi_provider_free(provider);
+        return (int)status;
+    }
+
+    printf("group id length: %zu\n", group_id.len);
+    printf("commit message length: %zu\n", commit_message.len);
+    printf("welcome message length: %zu\n", welcome_message.len);
+
+    openmls_ffi_buffer_free(group_id);
+    openmls_ffi_buffer_free(commit_message);
+    openmls_ffi_buffer_free(welcome_message);
+    openmls_ffi_buffer_free(group_info);
+    openmls_ffi_buffer_free(bob_key_package);
     openmls_ffi_provider_free(provider);
 
     printf("openmls-ffi version: %s\n", version);
