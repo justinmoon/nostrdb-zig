@@ -19,3 +19,6 @@ nostrdb-rs/
 
 checkouts/
 nostrdb/
+
+worktrees/
+.direnv
