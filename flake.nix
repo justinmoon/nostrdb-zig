@@ -82,14 +82,9 @@
           echo "✓ Code formatting OK"
           echo ""
           
-          echo "→ Cloning nostrdb with submodules..."
-          if [ ! -d "nostrdb" ]; then
-            git clone https://github.com/damus-io/nostrdb.git --depth 1
-            cd nostrdb
-            git submodule update --init --recursive --depth 1
-            cd ..
-          fi
-          echo "✓ nostrdb cloned"
+          echo "→ Ensuring nostrdb submodule is initialized..."
+          git submodule update --init --recursive
+          echo "✓ nostrdb submodule ready"
           echo ""
           
           echo "→ Build and test steps temporarily disabled"
@@ -164,11 +159,8 @@
             export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
             mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
             
-            # Clone nostrdb locally for the build
-            ${pkgs.git}/bin/git clone https://github.com/damus-io/nostrdb.git --depth 1
-            cd nostrdb
-            ${pkgs.git}/bin/git submodule update --init --recursive --depth 1
-            cd ..
+            # Ensure nostrdb submodule is available for the build
+            ${pkgs.git}/bin/git submodule update --init --recursive
             
             # Set up Zig paths
             export PATH="${zigPkg}/bin:$PATH"

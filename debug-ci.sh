@@ -6,12 +6,7 @@ rm -rf test-nostrdb-zig
 git clone https://github.com/justinmoon/nostrdb-zig.git test-nostrdb-zig
 cd test-nostrdb-zig
 git checkout zig-flake-ci
-
-# Clone nostrdb with submodules
-git clone https://github.com/damus-io/nostrdb.git --depth 1
-cd nostrdb
-git submodule update --init --recursive --depth 1
-cd ..
+git submodule update --init --recursive
 
 echo "Testing with nix..."
 nix develop --command bash -c "zig version"
