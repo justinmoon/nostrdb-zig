@@ -11,9 +11,8 @@ fn main() {
     let mut builder = cbindgen::Builder::new();
     builder = builder.with_crate(crate_dir);
     if config_path.exists() {
-        builder = builder.with_config(
-            cbindgen::Config::from_file(config_path).expect("load cbindgen config"),
-        );
+        builder = builder
+            .with_config(cbindgen::Config::from_file(config_path).expect("load cbindgen config"));
     }
 
     builder

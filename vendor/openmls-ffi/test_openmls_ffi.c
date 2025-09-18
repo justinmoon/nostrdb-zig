@@ -1,7 +1,5 @@
+#include "openmls_ffi.h"
 #include <stdio.h>
-
-extern const char *openmls_ffi_version(void);
-extern int openmls_ffi_smoketest(void);
 
 int main(void) {
     const char *version = openmls_ffi_version();
@@ -10,11 +8,20 @@ int main(void) {
         return 1;
     }
 
-    int status = openmls_ffi_smoketest();
+    void *provider = openmls_ffi_provider_new_default();
+    if (provider == NULL) {
+        fprintf(stderr, "failed to create provider\n");
+        return 1;
+    }
+
+    openmls_status_t status = openmls_ffi_smoketest();
     if (status != 0) {
         fprintf(stderr, "smoketest failed: %d\n", status);
-        return status;
+        openmls_ffi_provider_free(provider);
+        return (int)status;
     }
+
+    openmls_ffi_provider_free(provider);
 
     printf("openmls-ffi version: %s\n", version);
     return 0;

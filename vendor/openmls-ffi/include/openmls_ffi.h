@@ -26,4 +26,17 @@ const char *openmls_ffi_version(void);
  */
 openmls_status_t openmls_ffi_smoketest(void);
 
+/**
+ * Creates a new provider backed by RustCrypto and in-memory storage.
+ *
+ * The caller takes ownership of the returned pointer and must release it with
+ * [`openmls_ffi_provider_free`].
+ */
+void *openmls_ffi_provider_new_default(void);
+
+/**
+ * Releases a provider created by [`openmls_ffi_provider_new_default`].
+ */
+void openmls_ffi_provider_free(void *provider);
+
 #endif /* OPENMLS_FFI_H */
