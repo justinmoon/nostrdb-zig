@@ -14,8 +14,13 @@ jobs:
     runs-on: [self-hosted, nixos, hetzner]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive  # Important for nostrdb submodule
+
+      - name: Clone nostrdb with submodules
+        run: |
+          git clone https://github.com/damus-io/nostrdb.git --depth 1
+          cd nostrdb
+          git submodule update --init --recursive --depth 1
+          cd ..
 
       - name: Run CI tests with Nix
         run: |
