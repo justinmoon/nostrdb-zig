@@ -73,36 +73,28 @@
           echo ""
           
           echo "→ Building project..."
-          # Use native target to find system libc
-          export CC="${pkgs.stdenv.cc}/bin/cc"
+          # Use Zig's bundled musl libc for consistent builds
           export ZIG_LOCAL_CACHE_DIR="$(pwd)/.zig-cache"
           export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache-$$"
           
-          if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe -Dtarget=native-native; then
+          # Try with x86_64-linux-musl for Linux CI environment
+          if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl; then
             echo "✗ Build failed!"
-            # Try with musl if glibc fails
-            echo "Retrying with musl target..."
-            if ! ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe -Dtarget=native-linux-musl; then
-              echo "✗ Build failed with musl too!"
-              exit 1
-            fi
+            exit 1
           fi
           echo "✓ Build successful"
           echo ""
           
           echo "→ Running tests..."
-          if ! ${zigPkg}/bin/zig build test -Dtarget=native-native 2>/dev/null; then
-            echo "Retrying tests with musl target..."
-            if ! ${zigPkg}/bin/zig build test -Dtarget=native-linux-musl; then
-              echo "✗ Tests failed!"
-              exit 1
-            fi
+          if ! ${zigPkg}/bin/zig build test -Dtarget=x86_64-linux-musl; then
+            echo "✗ Tests failed!"
+            exit 1
           fi
           echo "✓ All tests passed"
           echo ""
           
           echo "→ Building megalith CLI..."
-          if ! ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe; then
+          if ! ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl; then
             echo "✗ Megalith build failed!"
             exit 1
           fi
