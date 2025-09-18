@@ -1,4 +1,12 @@
 const std = @import("std");
+const apple_sdk = @import("build/apple_sdk.zig");
+
+fn configureAppleSdk(b: *std.Build, step: *std.Build.Step.Compile) void {
+    apple_sdk.addPaths(b, step) catch |err| {
+        std.debug.print("error: failed to configure Apple SDK: {s}\n", .{@errorName(err)});
+        @panic("Apple SDK setup failed");
+    };
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -111,11 +119,6 @@ pub fn build(b: *std.Build) void {
         else => {},
     }
 
-    // macOS: link Security framework like build.rs
-    if (target.result.os.tag == .macos) {
-        lib.linkFramework("Security");
-    }
-
     b.installArtifact(lib);
 
     // Add libxev dependency (used by net module and tests)
@@ -213,6 +216,10 @@ pub fn build(b: *std.Build) void {
     megalith.root_module.addImport("timeline", timeline_module);
     megalith.root_module.addImport("ingest", ingest_module);
     megalith.root_module.addImport("ndb", ndb_module);
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, megalith);
+        megalith.linkFramework("Security");
+    }
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
@@ -237,6 +244,10 @@ pub fn build(b: *std.Build) void {
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, ssr_demo);
+        ssr_demo.linkFramework("Security");
+    }
     ssr_demo.linkLibrary(lib);
     const install_ssr = b.addInstallArtifact(ssr_demo, .{});
     const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
@@ -306,6 +317,7 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.addImport("cli_tests", cli_tests_module);
     if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, tests);
         tests.linkFramework("Security");
     }
 
