@@ -57,3 +57,27 @@ test "timeline skips duplicates" {
     const list = store.getTimeline(npub) orelse return error.TestExpectedResult;
     try std.testing.expectEqual(@as(usize, 1), list.entries.items.len);
 }
+
+test "timeline cap enforced under load" {
+    const allocator = std.testing.allocator;
+    var store = timeline.Store.init(allocator, 50);
+    defer store.deinit();
+
+    const npub = hexKey("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    const author = hexKey("1111111111111111111111111111111111111111111111111111111111111111");
+
+    var i: usize = 0;
+    while (i < 5000) : (i += 1) {
+        var buf: [64]u8 = undefined;
+        const slice = std.fmt.bufPrint(&buf, "%064x", .{i}) catch unreachable;
+        const id = hexKey(slice);
+        const entry = timeline.TimelineEntry{ .event_id = id, .created_at = @as(u64, @intCast(i)), .author = author };
+        try timeline.insertEvent(&store, npub, entry, "{\"kind\":1}");
+    }
+
+    const list = store.getTimeline(npub) orelse return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 50), list.entries.items.len);
+    try std.testing.expectEqual(@as(u64, 4999), list.meta.latest_created_at);
+    try std.testing.expectEqual(@as(u64, 4999), list.entries.items[0].created_at);
+    try std.testing.expectEqual(@as(u64, 4950), list.entries.items[49].created_at);
+}

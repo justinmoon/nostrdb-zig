@@ -9,11 +9,35 @@ pub const Response = union(enum) {
     binary: []const u8,
 };
 
+pub const ResponseBatch = struct {
+    messages: []const Response,
+};
+
+pub const RequestLog = struct {
+    allocator: Allocator,
+    entries: std.ArrayList([]u8),
+
+    pub fn init(allocator: Allocator) RequestLog {
+        return .{ .allocator = allocator, .entries = std.ArrayList([]u8).init(allocator) };
+    }
+
+    pub fn deinit(self: *RequestLog) void {
+        for (self.entries.items) |item| self.allocator.free(item);
+        self.entries.deinit();
+    }
+
+    pub fn append(self: *RequestLog, data: []const u8) Allocator.Error!void {
+        const copy = try self.allocator.dupe(u8, data);
+        try self.entries.append(copy);
+    }
+};
+
 pub const Options = struct {
     allocator: Allocator,
     port: u16,
     host: []const u8 = "127.0.0.1",
-    responses: []const Response,
+    batches: []const ResponseBatch,
+    request_log: ?*RequestLog = null,
 };
 
 pub const MockError = error{
@@ -27,7 +51,8 @@ pub const MockRelayServer = struct {
     allocator: Allocator,
     host: []u8,
     port: u16,
-    responses: []ResponseStorage,
+    batches: []BatchStorage,
+    request_log: ?*RequestLog,
 
     server: websocket.Server(Handler),
     thread: ?std.Thread = null,
@@ -37,14 +62,13 @@ pub const MockRelayServer = struct {
         var host_copy = try options.allocator.dupe(u8, options.host);
         errdefer options.allocator.free(host_copy);
 
-        var responses_copy = try options.allocator.alloc(ResponseStorage, options.responses.len);
-        errdefer options.allocator.free(responses_copy);
+        var batches_copy = try options.allocator.alloc(BatchStorage, options.batches.len);
+        errdefer options.allocator.free(batches_copy);
 
-        for (options.responses, 0..) |item, idx| {
-            responses_copy[idx] = switch (item) {
-                .text => |payload| .{ .tag = .text, .data = try options.allocator.dupe(u8, payload) },
-                .binary => |payload| .{ .tag = .binary, .data = try options.allocator.dupe(u8, payload) },
-            };
+        for (options.batches, 0..) |batch, idx| {
+            const storage = try BatchStorage.init(options.allocator, batch.messages);
+            errdefer storage.deinit(options.allocator);
+            batches_copy[idx] = storage;
         }
 
         var server = try websocket.Server(Handler).init(options.allocator, .{
@@ -57,7 +81,8 @@ pub const MockRelayServer = struct {
             .allocator = options.allocator,
             .host = host_copy,
             .port = options.port,
-            .responses = responses_copy,
+            .batches = batches_copy,
+            .request_log = options.request_log,
             .server = server,
         };
     }
@@ -69,10 +94,8 @@ pub const MockRelayServer = struct {
             }
         };
 
-        for (self.responses) |resp| {
-            self.allocator.free(resp.data);
-        }
-        self.allocator.free(self.responses);
+        for (self.batches) |batch| batch.deinit(self.allocator);
+        self.allocator.free(self.batches);
         self.allocator.free(self.host);
         self.server.deinit();
     }
@@ -109,6 +132,7 @@ pub const MockRelayServer = struct {
         parent: *MockRelayServer,
         responded: bool = false,
         subscription_id: ?[]u8 = null,
+        batch_index: usize = 0,
 
         pub fn init(h: *const websocket.Handshake, conn: *websocket.Conn, parent: *MockRelayServer) !Handler {
             _ = h;
@@ -121,25 +145,39 @@ pub const MockRelayServer = struct {
                 self.subscription_id = sub_copy;
             }
 
+            if (self.parent.request_log) |log| {
+                try log.append(data);
+            }
+
             if (self.responded) return;
             if (!std.mem.startsWith(u8, data, "[\"REQ")) return;
 
             self.responded = true;
-            for (self.parent.responses) |resp| {
-                switch (resp.tag) {
-                    .text => {
-                        const rendered = try self.renderText(resp.data);
-                        defer if (rendered.owned) self.parent.allocator.free(rendered.data);
-                        try self.conn.writeText(rendered.data);
-                    },
-                    .binary => try self.conn.writeBin(resp.data),
-                }
+            const batches = self.parent.batches;
+            if (self.batch_index >= batches.len) {
+                self.responded = false;
+                return;
             }
+            const current = batches[self.batch_index];
+            for (current.messages) |resp| try self.sendResponse(resp);
+            self.batch_index += 1;
+            self.responded = false;
         }
 
         pub fn close(self: *Handler) void {
             if (self.subscription_id) |sid| {
                 self.parent.allocator.free(sid);
+            }
+        }
+
+        fn sendResponse(self: *Handler, resp: ResponseStorage) !void {
+            switch (resp.tag) {
+                .text => {
+                    const rendered = try self.renderText(resp.data);
+                    defer if (rendered.owned) self.parent.allocator.free(rendered.data);
+                    try self.conn.writeText(rendered.data);
+                },
+                .binary => try self.conn.writeBin(resp.data),
             }
         }
 
@@ -171,6 +209,27 @@ pub const MockRelayServer = struct {
 const ResponseStorage = struct {
     tag: enum { text, binary },
     data: []u8,
+};
+
+const BatchStorage = struct {
+    messages: []ResponseStorage,
+
+    fn init(allocator: Allocator, src: []const Response) !BatchStorage {
+        var entries = try allocator.alloc(ResponseStorage, src.len);
+        errdefer allocator.free(entries);
+        for (src, 0..) |resp, idx| {
+            entries[idx] = switch (resp) {
+                .text => |payload| .{ .tag = .text, .data = try allocator.dupe(u8, payload) },
+                .binary => |payload| .{ .tag = .binary, .data = try allocator.dupe(u8, payload) },
+            };
+        }
+        return .{ .messages = entries };
+    }
+
+    fn deinit(self: *const BatchStorage, allocator: Allocator) void {
+        for (self.messages) |resp| allocator.free(resp.data);
+        allocator.free(self.messages);
+    }
 };
 
 const RenderedText = struct {

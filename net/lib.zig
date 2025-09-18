@@ -29,6 +29,8 @@ pub const RelayPoolError = relay_pool.PoolError;
 pub const MockRelayServer = mock_relay.MockRelayServer;
 pub const MockRelayServerOptions = mock_relay.Options;
 pub const MockRelayResponse = mock_relay.Response;
+pub const MockRelayResponseBatch = mock_relay.ResponseBatch;
+pub const MockRelayRequestLog = mock_relay.RequestLog;
 pub const MockRelayServerError = mock_relay.MockError;
 
 pub fn version() []const u8 {

@@ -58,7 +58,8 @@ pub const Pipeline = struct {
         var follow_lookup = try SelfFollowSet.init(self.allocator, follows);
         defer follow_lookup.deinit();
 
-        var filters = try self.buildFilters(follows, null);
+        const initial_since = self.initialSince();
+        var filters = try self.buildFilters(follows, initial_since);
         defer self.freeFilters(filters);
 
         var clients = try self.allocator.alloc(ClientState, relays.len);
@@ -206,6 +207,15 @@ pub const Pipeline = struct {
             self.allocator.free(item);
         }
         self.allocator.free(filters);
+    }
+
+    fn initialSince(self: *Pipeline) ?u64 {
+        if (self.timeline_store.getTimeline(self.npub)) |timeline_ref| {
+            if (timeline_ref.entries.items.len >= @as(usize, self.limit)) {
+                return timeline_ref.meta.latest_created_at;
+            }
+        }
+        return null;
     }
 };
 

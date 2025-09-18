@@ -172,11 +172,11 @@ test "fetcher picks latest contact list" {
     var server = try net.MockRelayServer.init(.{
         .allocator = allocator,
         .port = port,
-        .responses = &.{
+        .batches = &.{.{ .messages = &.{
             Response{ .text = event_old },
             Response{ .text = event_new },
             Response{ .text = eose },
-        },
+        } }},
     });
     defer server.deinit();
     try server.start();
