@@ -9,16 +9,24 @@ int main(void) {
         return 1;
     }
 
-    void *provider = openmls_ffi_provider_new_default();
-    if (provider == NULL) {
-        fprintf(stderr, "failed to create provider\n");
+    void *provider_alice = openmls_ffi_provider_new_default();
+    if (provider_alice == NULL) {
+        fprintf(stderr, "failed to create alice provider\n");
+        return 1;
+    }
+
+    void *provider_bob = openmls_ffi_provider_new_default();
+    if (provider_bob == NULL) {
+        fprintf(stderr, "failed to create bob provider\n");
+        openmls_ffi_provider_free(provider_alice);
         return 1;
     }
 
     openmls_status_t status = openmls_ffi_smoketest();
     if (status != 0) {
         fprintf(stderr, "smoketest failed: %d\n", status);
-        openmls_ffi_provider_free(provider);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
         return (int)status;
     }
 
@@ -28,7 +36,7 @@ int main(void) {
     OpenmlsFfiBuffer bob_key_package = {0};
 
     status = openmls_ffi_key_package_create(
-        provider,
+        provider_bob,
         bob_identity,
         ciphersuite,
         NULL,
@@ -39,7 +47,8 @@ int main(void) {
 
     if (status != OPENMLS_STATUS_OK) {
         fprintf(stderr, "key package creation failed: %d\n", status);
-        openmls_ffi_provider_free(provider);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
         return (int)status;
     }
 
@@ -51,7 +60,7 @@ int main(void) {
     OpenmlsFfiBuffer group_info = {0};
 
     status = openmls_ffi_group_create(
-        provider,
+        provider_alice,
         alice_identity,
         ciphersuite,
         NULL,
@@ -70,7 +79,8 @@ int main(void) {
     if (status != OPENMLS_STATUS_OK) {
         fprintf(stderr, "group creation failed: %d\n", status);
         openmls_ffi_buffer_free(bob_key_package);
-        openmls_ffi_provider_free(provider);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
         return (int)status;
     }
 
@@ -78,12 +88,60 @@ int main(void) {
     printf("commit message length: %zu\n", commit_message.len);
     printf("welcome message length: %zu\n", welcome_message.len);
 
+    void *staged_welcome = NULL;
+    OpenmlsFfiBuffer group_context = {0};
+    status = openmls_ffi_welcome_parse(
+        provider_bob,
+        &welcome_message,
+        NULL,
+        true,
+        &staged_welcome,
+        &group_context
+    );
+
+    if (status != OPENMLS_STATUS_OK) {
+        fprintf(stderr, "welcome parse failed: %d\n", status);
+        openmls_ffi_buffer_free(group_context);
+        openmls_ffi_buffer_free(group_id);
+        openmls_ffi_buffer_free(commit_message);
+        openmls_ffi_buffer_free(welcome_message);
+        openmls_ffi_buffer_free(group_info);
+        openmls_ffi_buffer_free(bob_key_package);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
+        return (int)status;
+    }
+
+    OpenmlsFfiBuffer bob_group_id = {0};
+    status = openmls_ffi_welcome_join(provider_bob, staged_welcome, &bob_group_id);
+
+    if (status != OPENMLS_STATUS_OK) {
+        fprintf(stderr, "welcome join failed: %d\n", status);
+        openmls_ffi_welcome_free(staged_welcome);
+        openmls_ffi_buffer_free(group_context);
+        openmls_ffi_buffer_free(group_id);
+        openmls_ffi_buffer_free(commit_message);
+        openmls_ffi_buffer_free(welcome_message);
+        openmls_ffi_buffer_free(group_info);
+        openmls_ffi_buffer_free(bob_key_package);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
+        return (int)status;
+    }
+
+    openmls_ffi_welcome_free(staged_welcome);
+
+    printf("bob group id length: %zu\n", bob_group_id.len);
+
+    openmls_ffi_buffer_free(bob_group_id);
+    openmls_ffi_buffer_free(group_context);
     openmls_ffi_buffer_free(group_id);
     openmls_ffi_buffer_free(commit_message);
     openmls_ffi_buffer_free(welcome_message);
     openmls_ffi_buffer_free(group_info);
     openmls_ffi_buffer_free(bob_key_package);
-    openmls_ffi_provider_free(provider);
+    openmls_ffi_provider_free(provider_bob);
+    openmls_ffi_provider_free(provider_alice);
 
     printf("openmls-ffi version: %s\n", version);
     return 0;

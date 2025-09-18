@@ -86,4 +86,17 @@ openmls_status_t openmls_ffi_group_create(void *provider,
                                           struct OpenmlsFfiBuffer *out_welcome_message,
                                           struct OpenmlsFfiBuffer *out_group_info);
 
+openmls_status_t openmls_ffi_welcome_parse(void *provider,
+                                           const struct OpenmlsFfiBuffer *welcome_message,
+                                           const struct OpenmlsFfiBuffer *ratchet_tree,
+                                           bool use_ratchet_tree_extension,
+                                           void **out_staged_welcome,
+                                           struct OpenmlsFfiBuffer *out_group_context);
+
+openmls_status_t openmls_ffi_welcome_join(void *provider,
+                                          void *staged_welcome,
+                                          struct OpenmlsFfiBuffer *out_group_id);
+
+void openmls_ffi_welcome_free(void *staged_welcome);
+
 #endif /* OPENMLS_FFI_H */
