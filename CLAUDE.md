@@ -1,0 +1,1 @@
+- If you want to test out nix builds or debug issues on linux, you can `ssh hetzner` and experiment there
