@@ -207,6 +207,24 @@ pub const Note = struct {
         return c.ndb_note_kind(self.ptr);
     }
 
+    pub fn createdAt(self: Note) u32 {
+        return c.ndb_note_created_at(self.ptr);
+    }
+
+    pub fn id(self: Note) [32]u8 {
+        var out: [32]u8 = undefined;
+        const src = c.ndb_note_id(self.ptr);
+        @memcpy(out[0..], src[0..32]);
+        return out;
+    }
+
+    pub fn pubkey(self: Note) [32]u8 {
+        var out: [32]u8 = undefined;
+        const src = c.ndb_note_pubkey(self.ptr);
+        @memcpy(out[0..], src[0..32]);
+        return out;
+    }
+
     pub fn content(self: Note) []const u8 {
         const s = c.ndb_note_content(self.ptr);
         return std.mem.span(s);
@@ -313,6 +331,13 @@ pub const FilterBuilder = struct {
     pub fn ids(self: *FilterBuilder, id_list: []const [32]u8) !*FilterBuilder {
         if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_IDS) == 0) return Error.QueryFailed;
         for (id_list) |id| if (c.ndb_filter_add_id_element(&self.filter.inner, &id[0]) == 0) return Error.QueryFailed;
+        c.ndb_filter_end_field(&self.filter.inner);
+        return self;
+    }
+
+    pub fn authors(self: *FilterBuilder, authors_list: []const [32]u8) !*FilterBuilder {
+        if (c.ndb_filter_start_field(&self.filter.inner, c.NDB_FILTER_AUTHORS) == 0) return Error.QueryFailed;
+        for (authors_list) |author| if (c.ndb_filter_add_id_element(&self.filter.inner, &author[0]) == 0) return Error.QueryFailed;
         c.ndb_filter_end_field(&self.filter.inner);
         return self;
     }

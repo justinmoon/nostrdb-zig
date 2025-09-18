@@ -1,5 +1,6 @@
 const std = @import("std");
-const c = @import("../src/c.zig").c;
+const ndb = @import("ndb");
+const c = ndb.c;
 
 pub const DecodeError = error{
     InvalidNpub,
@@ -35,12 +36,12 @@ pub fn decodeNpub(npub: []const u8) DecodeError![32]u8 {
 
     const ok = c.parse_nostr_bech32(&scratch, scratch.len, npub.ptr, npub.len, &parsed);
     if (ok == 0) return DecodeError.InvalidNpub;
-    if (parsed.type != c.enum_nostr_bech32_type.NOSTR_BECH32_NPUB) return DecodeError.InvalidNpub;
-    if (parsed.npub.pubkey == null) return DecodeError.InvalidNpub;
+    if (parsed.type != @as(@TypeOf(parsed.type), c.NOSTR_BECH32_NPUB)) return DecodeError.InvalidNpub;
+    if (parsed.unnamed_0.npub.pubkey == null) return DecodeError.InvalidNpub;
 
     var out: [32]u8 = undefined;
-    const src = parsed.npub.pubkey[0..32];
-    std.mem.copy(u8, out[0..], src);
+    const src = parsed.unnamed_0.npub.pubkey[0..32];
+    @memcpy(out[0..], src);
     return out;
 }
 
