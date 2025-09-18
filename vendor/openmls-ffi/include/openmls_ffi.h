@@ -11,6 +11,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef enum OpenmlsProcessedMessageType {
+  Application = 0,
+  Proposal = 1,
+  Commit = 2,
+  ExternalJoinProposal = 3,
+  Other = 255,
+} OpenmlsProcessedMessageType;
+
 typedef int openmls_status_t;
 
 typedef struct OpenmlsFfiBuffer {
@@ -98,5 +106,16 @@ openmls_status_t openmls_ffi_welcome_join(void *provider,
                                           struct OpenmlsFfiBuffer *out_group_id);
 
 void openmls_ffi_welcome_free(void *staged_welcome);
+
+openmls_status_t openmls_ffi_message_encrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *plaintext,
+                                             struct OpenmlsFfiBuffer *out_ciphertext);
+
+openmls_status_t openmls_ffi_message_decrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *ciphertext,
+                                             struct OpenmlsFfiBuffer *out_plaintext,
+                                             enum OpenmlsProcessedMessageType *out_message_type);
 
 #endif /* OPENMLS_FFI_H */

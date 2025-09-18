@@ -133,6 +133,63 @@ int main(void) {
 
     printf("bob group id length: %zu\n", bob_group_id.len);
 
+    const char *message = "Hi Bob!";
+    OpenmlsFfiBuffer plaintext = { (uint8_t *)message, strlen(message) };
+    OpenmlsFfiBuffer ciphertext = {0};
+
+    status = openmls_ffi_message_encrypt(
+        provider_alice,
+        &group_id,
+        &plaintext,
+        &ciphertext
+    );
+
+    if (status != OPENMLS_STATUS_OK) {
+        fprintf(stderr, "message encrypt failed: %d\n", status);
+        openmls_ffi_buffer_free(group_context);
+        openmls_ffi_buffer_free(group_id);
+        openmls_ffi_buffer_free(commit_message);
+        openmls_ffi_buffer_free(welcome_message);
+        openmls_ffi_buffer_free(group_info);
+        openmls_ffi_buffer_free(bob_key_package);
+        openmls_ffi_buffer_free(bob_group_id);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
+        return (int)status;
+    }
+
+    OpenmlsFfiBuffer decrypted = {0};
+    OpenmlsProcessedMessageType message_type = Other;
+    status = openmls_ffi_message_decrypt(
+        provider_bob,
+        &bob_group_id,
+        &ciphertext,
+        &decrypted,
+        &message_type
+    );
+
+    if (status != OPENMLS_STATUS_OK) {
+        fprintf(stderr, "message decrypt failed: %d\n", status);
+        openmls_ffi_buffer_free(ciphertext);
+        openmls_ffi_buffer_free(group_context);
+        openmls_ffi_buffer_free(group_id);
+        openmls_ffi_buffer_free(commit_message);
+        openmls_ffi_buffer_free(welcome_message);
+        openmls_ffi_buffer_free(group_info);
+        openmls_ffi_buffer_free(bob_key_package);
+        openmls_ffi_buffer_free(bob_group_id);
+        openmls_ffi_provider_free(provider_bob);
+        openmls_ffi_provider_free(provider_alice);
+        return (int)status;
+    }
+
+    printf("message type: %d\n", message_type);
+    if (decrypted.len > 0) {
+        printf("decrypted message: %.*s\n", (int)decrypted.len, decrypted.data);
+        openmls_ffi_buffer_free(decrypted);
+    }
+    openmls_ffi_buffer_free(ciphertext);
+
     openmls_ffi_buffer_free(bob_group_id);
     openmls_ffi_buffer_free(group_context);
     openmls_ffi_buffer_free(group_id);

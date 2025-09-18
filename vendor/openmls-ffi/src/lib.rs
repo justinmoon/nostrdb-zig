@@ -9,6 +9,8 @@ use std::sync::OnceLock;
 use openmls::extensions::{
     Extension, ExtensionType, Extensions, RequiredCapabilitiesExtension, UnknownExtension,
 };
+use openmls::framing::{MlsMessageBodyIn, MlsMessageIn, ProcessedMessageContent};
+use openmls::group::GroupId;
 use openmls::key_packages::{KeyPackage, KeyPackageIn};
 use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
@@ -93,6 +95,15 @@ impl OpenmlsFfiBuffer {
 }
 
 #[repr(C)]
+pub enum OpenmlsProcessedMessageType {
+    Application = 0,
+    Proposal = 1,
+    Commit = 2,
+    ExternalJoinProposal = 3,
+    Other = 255,
+}
+
+#[repr(C)]
 pub struct OpenmlsExtensionInput {
     pub extension_type: u16,
     pub data: OpenmlsFfiBuffer,
@@ -148,6 +159,35 @@ unsafe fn read_buffer_slice<'a>(buffer: &OpenmlsFfiBuffer) -> Result<&'a [u8], o
 
 unsafe fn buffer_to_vec(buffer: &OpenmlsFfiBuffer) -> Result<Vec<u8>, openmls_status_t> {
     Ok(read_buffer_slice(buffer)?.to_vec())
+}
+
+fn load_group_and_id<'a>(
+    provider: &mut FfiProvider,
+    group_id_buffer: &OpenmlsFfiBuffer,
+) -> Result<(MlsGroup, GroupId), openmls_status_t> {
+    let group_id_bytes = unsafe { read_buffer_slice(group_id_buffer)? };
+    if group_id_bytes.is_empty() {
+        return Err(OPENMLS_STATUS_INVALID_ARGUMENT);
+    }
+    let group_id = GroupId::from_slice(group_id_bytes);
+    let group = MlsGroup::load(provider.storage(), &group_id)
+        .map_err(|_| OPENMLS_STATUS_ERROR)?
+        .ok_or(OPENMLS_STATUS_ERROR)?;
+    Ok((group, group_id))
+}
+
+fn load_signer(
+    provider: &FfiProvider,
+    group: &MlsGroup,
+) -> Result<SignatureKeyPair, openmls_status_t> {
+    let own_leaf = group.own_leaf().ok_or(OPENMLS_STATUS_ERROR)?;
+    let public_key = own_leaf.signature_key().as_slice();
+    SignatureKeyPair::read(
+        provider.storage(),
+        public_key,
+        group.ciphersuite().signature_algorithm(),
+    )
+    .ok_or(OPENMLS_STATUS_ERROR)
 }
 
 /// Builds a key package for publishing to relays.
@@ -602,4 +642,136 @@ pub unsafe extern "C" fn openmls_ffi_welcome_free(staged_welcome: *mut c_void) {
     if !staged_welcome.is_null() {
         drop(Box::from_raw(staged_welcome as *mut FfiStagedWelcome));
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn openmls_ffi_message_encrypt(
+    provider: *mut c_void,
+    group_id: *const OpenmlsFfiBuffer,
+    plaintext: *const OpenmlsFfiBuffer,
+    out_ciphertext: *mut OpenmlsFfiBuffer,
+) -> openmls_status_t {
+    let provider = match ffi_provider_mut(provider) {
+        Some(provider) => provider,
+        None => return OPENMLS_STATUS_NULL_POINTER,
+    };
+
+    if group_id.is_null() || plaintext.is_null() || out_ciphertext.is_null() {
+        return OPENMLS_STATUS_NULL_POINTER;
+    }
+
+    let (mut group, _) = match load_group_and_id(provider, &*group_id) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+
+    let signer = match load_signer(provider, &group) {
+        Ok(signer) => signer,
+        Err(status) => return status,
+    };
+
+    let plaintext_slice = match read_buffer_slice(&*plaintext) {
+        Ok(slice) => slice,
+        Err(status) => return status,
+    };
+
+    let message = match group.create_message(provider, &signer, plaintext_slice) {
+        Ok(message) => message,
+        Err(_) => return OPENMLS_STATUS_ERROR,
+    };
+
+    let ciphertext = match message.tls_serialize_detached() {
+        Ok(bytes) => bytes,
+        Err(_) => return OPENMLS_STATUS_ERROR,
+    };
+
+    ptr::write(out_ciphertext, OpenmlsFfiBuffer::from_vec(ciphertext));
+    OPENMLS_STATUS_OK
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn openmls_ffi_message_decrypt(
+    provider: *mut c_void,
+    group_id: *const OpenmlsFfiBuffer,
+    ciphertext: *const OpenmlsFfiBuffer,
+    out_plaintext: *mut OpenmlsFfiBuffer,
+    out_message_type: *mut OpenmlsProcessedMessageType,
+) -> openmls_status_t {
+    let provider = match ffi_provider_mut(provider) {
+        Some(provider) => provider,
+        None => return OPENMLS_STATUS_NULL_POINTER,
+    };
+
+    if group_id.is_null() || ciphertext.is_null() || out_message_type.is_null() {
+        return OPENMLS_STATUS_NULL_POINTER;
+    }
+
+    if !out_plaintext.is_null() {
+        (*out_plaintext).data = ptr::null_mut();
+        (*out_plaintext).len = 0;
+    }
+
+    let (mut group, _) = match load_group_and_id(provider, &*group_id) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+
+    let ciphertext_slice = match read_buffer_slice(&*ciphertext) {
+        Ok(slice) => slice,
+        Err(status) => return status,
+    };
+
+    let mls_message = match MlsMessageIn::tls_deserialize_exact(ciphertext_slice) {
+        Ok(message) => message,
+        Err(err) => {
+            eprintln!("openmls_ffi_message_decrypt: deserialize error: {:?}", err);
+            return OPENMLS_STATUS_ERROR;
+        }
+    };
+
+    let protocol_message = match mls_message.try_into_protocol_message() {
+        Ok(message) => message,
+        Err(err) => {
+            eprintln!(
+                "openmls_ffi_message_decrypt: protocol conversion error: {:?}",
+                err
+            );
+            return OPENMLS_STATUS_ERROR;
+        }
+    };
+
+    let processed = match group.process_message(provider, protocol_message) {
+        Ok(processed) => processed,
+        Err(err) => {
+            eprintln!("openmls_ffi_message_decrypt: process error: {:?}", err);
+            return OPENMLS_STATUS_ERROR;
+        }
+    };
+
+    match processed.into_content() {
+        ProcessedMessageContent::ApplicationMessage(application_message) => {
+            if !out_plaintext.is_null() {
+                let bytes = application_message.into_bytes();
+                ptr::write(out_plaintext, OpenmlsFfiBuffer::from_vec(bytes));
+            }
+            ptr::write(out_message_type, OpenmlsProcessedMessageType::Application);
+        }
+        ProcessedMessageContent::ProposalMessage(_) => {
+            ptr::write(out_message_type, OpenmlsProcessedMessageType::Proposal);
+        }
+        ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+            if group.merge_staged_commit(provider, *staged_commit).is_err() {
+                return OPENMLS_STATUS_ERROR;
+            }
+            ptr::write(out_message_type, OpenmlsProcessedMessageType::Commit);
+        }
+        ProcessedMessageContent::ExternalJoinProposalMessage(_) => {
+            ptr::write(
+                out_message_type,
+                OpenmlsProcessedMessageType::ExternalJoinProposal,
+            );
+        }
+    }
+
+    OPENMLS_STATUS_OK
 }
