@@ -10,10 +10,10 @@ pub fn build(b: *std.Build) void {
     // Common include paths for all C code
     // On ARM64, add our override directory first to provide a fixed config.h
     if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        lib.addIncludePath(b.path("src/override"));  // Our config.h override comes first
+        lib.addIncludePath(b.path("src/override")); // Our config.h override comes first
     }
     lib.addIncludePath(b.path("nostrdb/src"));
-    lib.addIncludePath(b.path("nostrdb/src/bindings/c"));  // For profile_reader.h
+    lib.addIncludePath(b.path("nostrdb/src/bindings/c")); // For profile_reader.h
     lib.addIncludePath(b.path("nostrdb/ccan"));
     lib.addIncludePath(b.path("nostrdb/deps/lmdb"));
     lib.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
             "nostrdb/deps/flatcc/src/runtime/refmap.c",
             "nostrdb/deps/lmdb/mdb.c",
             "nostrdb/deps/lmdb/midl.c",
-            "src/profile_shim.c",  // Profile field accessor shim
+            "src/profile_shim.c", // Profile field accessor shim
         },
         .flags = &.{
             "-Wno-sign-compare",
@@ -118,6 +118,12 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    const proto_module = b.createModule(.{
+        .root_source_file = b.path("proto/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const megalith = b.addExecutable(.{
         .name = "megalith",
         .root_module = b.createModule(.{
@@ -126,6 +132,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    megalith.root_module.addImport("proto", proto_module);
     megalith.linkLibrary(lib);
 
     const install_megalith = b.addInstallArtifact(megalith, .{});
@@ -152,6 +159,13 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     tests.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     tests.linkLibrary(lib);
+    tests.root_module.addImport("proto", proto_module);
+    const proto_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/proto_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("proto_tests", proto_tests_module);
     tests.root_module.addImport("xev", xev.module("xev"));
     if (target.result.os.tag == .macos) {
         tests.linkFramework("Security");

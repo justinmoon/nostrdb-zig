@@ -3,6 +3,7 @@ const ndb = @import("ndb.zig");
 
 // Import Phase 5 tests
 test {
+    _ = @import("proto_tests");
     _ = @import("test_phase5.zig");
 }
 
