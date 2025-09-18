@@ -148,20 +148,36 @@
           
           src = ./.;
           
-          nativeBuildInputs = devDeps;
+          nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+          
+          # Skip configure phase since we're using Zig
+          configurePhase = ''
+            echo "Skipping configure phase (Zig project)"
+          '';
           
           buildPhase = ''
+            # Set up SSL certificates for git
+            export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            
+            # Set up Zig cache directory 
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+            
             # Clone nostrdb locally for the build
-            git clone https://github.com/damus-io/nostrdb.git --depth 1
+            ${pkgs.git}/bin/git clone https://github.com/damus-io/nostrdb.git --depth 1
             cd nostrdb
-            git submodule update --init --recursive --depth 1
+            ${pkgs.git}/bin/git submodule update --init --recursive --depth 1
             cd ..
             
+            # Set up Zig paths
+            export PATH="${zigPkg}/bin:$PATH"
+            
             # Build with release optimization
-            zig build -Doptimize=ReleaseSafe --prefix $out
+            ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe --prefix $out
             
             # Also build megalith CLI  
-            zig build megalith -Doptimize=ReleaseSafe --prefix $out
+            ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe --prefix $out
           '';
           
           installPhase = ''
