@@ -149,7 +149,9 @@
             set -euo pipefail
             export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          if [ -d .git ]; then
             ${pkgs.git}/bin/git submodule update --init --recursive
+          fi
             export PATH="${zigPkg}/bin:$PATH"
             ${zigPkg}/bin/zig build ssr-demo -Doptimize=ReleaseSafe --prefix $out
           '';
@@ -183,7 +185,9 @@
             mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
             
             # Ensure nostrdb submodule is available for the build
-            ${pkgs.git}/bin/git submodule update --init --recursive
+            if [ -d .git ]; then
+              ${pkgs.git}/bin/git submodule update --init --recursive
+            fi
             
             # Set up Zig paths
             export PATH="${zigPkg}/bin:$PATH"
