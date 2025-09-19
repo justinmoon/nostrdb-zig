@@ -330,7 +330,8 @@ fn renderTimelinePage(
     try w.writeAll("<main>\n");
     try writeLookupForm(&w, npub_value);
     if (notes.len == 0) {
-        try w.writeAll("<section class=\\"timeline\\">\n<div class=\\"empty\\">No posts found for that npub.</div>\n</section>\n");
+        try w.writeAll("<section class=\"timeline\">\n");
+        try w.writeAll("<div class=\"empty\">No posts found for that npub.</div>\n</section>\n");
         try writeSampleDataHelp(&w);
         try w.writeAll("</main>\n</body></html>");
         return try list.toOwnedSlice(allocator);
@@ -452,4 +453,3 @@ fn formatTimestamp(writer: anytype, ts: u32) !void {
         },
     );
 }
-
