@@ -181,6 +181,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    contacts_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
     contacts_module.addImport("proto", proto_module);
     contacts_module.addImport("net", net_module);
     contacts_module.addImport("ndb", ndb_module);
@@ -190,6 +191,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    timeline_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
 
     const ingest_module = b.createModule(.{
         .root_source_file = b.path("ingest/lib.zig"),

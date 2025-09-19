@@ -163,10 +163,27 @@ pub fn runWithOptions(options: Options, writer: anytype) !void {
     var db = try ndb.Ndb.init(options.allocator, tmp_subdir, &cfg);
     defer db.deinit();
 
-    var contacts_store = contacts.Store.init(options.allocator);
+    const contacts_dir = try std.fs.path.join(options.allocator, &.{ tmp_subdir, "contacts" });
+    defer options.allocator.free(contacts_dir);
+    std.fs.makeDirAbsolute(contacts_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+
+    var contacts_store = try contacts.Store.init(options.allocator, .{ .path = contacts_dir });
     defer contacts_store.deinit();
 
-    var timeline_store = timeline.Store.init(options.allocator, @intCast(options.limit));
+    const timeline_dir = try std.fs.path.join(options.allocator, &.{ tmp_subdir, "timeline" });
+    defer options.allocator.free(timeline_dir);
+    std.fs.makeDirAbsolute(timeline_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+
+    var timeline_store = try timeline.Store.init(options.allocator, .{
+        .path = timeline_dir,
+        .max_entries = @intCast(options.limit),
+    });
     defer timeline_store.deinit();
 
     var fetcher = contacts.Fetcher.init(options.allocator, &contacts_store);
@@ -214,18 +231,21 @@ fn printTimeline(
     store: *timeline.Store,
     limit: u32,
 ) !void {
-    const list_opt = store.getTimeline(npub);
-    if (list_opt == null or list_opt.?.entries.items.len == 0) {
-        try writer.writeAll("No events found.\n");
+    var snapshot = try timeline.loadTimeline(store, npub);
+    defer snapshot.deinit();
+
+    if (snapshot.entries.len == 0) {
+        try writer.writeAll("No events found.
+");
         return;
     }
 
-    const timeline_ref = list_opt.?;
-    const total = timeline_ref.entries.items.len;
+    const total = snapshot.entries.len;
     const display_count = @min(@as(usize, limit), total);
 
     var header_buf: [128]u8 = undefined;
-    const header = try std.fmt.bufPrint(&header_buf, "Timeline ({d} events, showing {d})\n", .{ total, display_count });
+    const header = try std.fmt.bufPrint(&header_buf, "Timeline ({d} events, showing {d})
+", .{ total, display_count });
     try writer.writeAll(header);
 
     var event_buf: [64]u8 = undefined;
@@ -234,21 +254,24 @@ fn printTimeline(
 
     var idx: usize = 0;
     while (idx < display_count) : (idx += 1) {
-        const entry = timeline_ref.entries.items[idx];
+        const entry = snapshot.entries[idx];
         const event_hex = encodeHexLower(&event_buf, entry.event_id[0..]);
         const author_hex = encodeHexLower(&author_buf, entry.author[0..]);
 
         const prefix = try std.fmt.bufPrint(&line_buf, "[{d:>3}] {d}  {s} {s}", .{ idx, entry.created_at, event_hex, author_hex });
         try writer.writeAll(prefix);
 
-        if (timeline.getEvent(store, entry.event_id)) |record| {
+        if (try timeline.getEvent(store, entry.event_id)) |record| {
+            defer record.deinit();
             try writer.writeAll("  ");
             try writeContentPreview(writer, allocator, record.payload);
         }
 
-        try writer.writeAll("\n");
+        try writer.writeAll("
+");
     }
 }
+
 
 fn encodeHexLower(buf: []u8, bytes: []const u8) []const u8 {
     const charset = "0123456789abcdef";
