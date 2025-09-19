@@ -53,6 +53,7 @@ pub fn build(b: *std.Build) void {
             "-Wno-misleading-indentation",
             "-Wno-unused-function",
             "-Wno-unused-parameter",
+            "-U_FORTIFY_SOURCE",
         },
     });
     // Build CCAN sha256
@@ -63,6 +64,7 @@ pub fn build(b: *std.Build) void {
         .flags = &.{
             "-Wno-unused-function",
             "-Wno-unused-parameter",
+            "-U_FORTIFY_SOURCE",
         },
     });
 
@@ -85,13 +87,14 @@ pub fn build(b: *std.Build) void {
                 "nostrdb/src/bolt11/amount.c",
                 "nostrdb/src/bolt11/hash_u5.c",
             },
-            .flags = &.{
-                "-Wno-sign-compare",
-                "-Wno-misleading-indentation",
-                "-Wno-unused-function",
-                "-Wno-unused-parameter",
-            },
-        });
+        .flags = &.{
+            "-Wno-sign-compare",
+            "-Wno-misleading-indentation",
+            "-Wno-unused-function",
+            "-Wno-unused-parameter",
+            "-U_FORTIFY_SOURCE",
+        },
+    });
     }
 
     // secp256k1 sources and defines
@@ -105,6 +108,7 @@ pub fn build(b: *std.Build) void {
         .flags = &.{
             "-Wno-unused-function",
             "-Wno-unused-parameter",
+            "-U_FORTIFY_SOURCE",
         },
     });
     lib.root_module.addCMacro("SECP256K1_STATIC", "1");
