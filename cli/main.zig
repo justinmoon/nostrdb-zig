@@ -259,7 +259,8 @@ fn printTimeline(
         const prefix = try std.fmt.bufPrint(&line_buf, "[{d:>3}] {d}  {s} {s}", .{ idx, entry.created_at, event_hex, author_hex });
         try writer.writeAll(prefix);
 
-        if (try timeline.getEvent(store, entry.event_id)) |record| {
+        if (try timeline.getEvent(store, entry.event_id)) |rec_val| {
+            var record = rec_val; // make mutable for deinit()
             defer record.deinit();
             try writer.writeAll("  ");
             try writeContentPreview(writer, allocator, record.payload);

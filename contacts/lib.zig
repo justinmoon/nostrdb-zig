@@ -12,6 +12,7 @@ const log = std.log.scoped(.contacts);
 pub const Allocator = std.mem.Allocator;
 
 pub const ContactKey = [32]u8;
+const KEY_LEN: usize = 32;
 
 const zero_key = [_]u8{0} ** 32;
 
@@ -72,7 +73,7 @@ pub const Store = struct {
         try check(clmdb.mdb_txn_begin(env_ptr.?, null, 0, &txn_ptr));
         errdefer clmdb.mdb_txn_abort(txn_ptr.?);
 
-        const lists_name = try std.cstr.addNullByte(allocator, "contact_lists");
+        const lists_name = try allocator.dupeZ(u8, "contact_lists");
         defer allocator.free(lists_name);
         var lists_dbi: clmdb.MDB_dbi = undefined;
         try check(clmdb.mdb_dbi_open(txn_ptr.?, @ptrCast(lists_name.ptr), clmdb.MDB_CREATE, &lists_dbi));
@@ -104,7 +105,7 @@ pub const Store = struct {
         }
         try check(rc);
 
-        return parseStoredList(self, value);
+        return try parseStoredList(self, value);
     }
 
     pub fn applyEvent(self: *Store, event: *ContactEvent) StoreError!void {
@@ -133,19 +134,19 @@ pub const Store = struct {
 
         const follow_count = event.follows.len;
         if (follow_count > std.math.maxInt(u32)) return error.TooManyFollows;
-        const stored_count = @intCast(u32, follow_count);
-        const total_len = 8 + 32 + 4 + follow_count * ContactKey.len;
+        const stored_count: u32 = @intCast(follow_count);
+        const total_len = 8 + 32 + 4 + follow_count * KEY_LEN;
         var buf = try self.allocator.alloc(u8, total_len);
         defer self.allocator.free(buf);
 
-        std.mem.writeIntLittle(u64, buf[0..8], event.created_at);
+        std.mem.writeInt(u64, buf[0..8], event.created_at, .little);
         @memcpy(buf[8..40], event.event_id[0..]);
-        std.mem.writeIntLittle(u32, buf[40..44], stored_count);
+        std.mem.writeInt(u32, buf[40..44], stored_count, .little);
 
         var offset: usize = 44;
         for (event.follows) |follow| {
-            @memcpy(buf[offset .. offset + ContactKey.len], follow[0..]);
-            offset += ContactKey.len;
+            @memcpy(buf[offset .. offset + KEY_LEN], follow[0..]);
+            offset += KEY_LEN;
         }
 
         var value = mdbVal(buf);
@@ -167,7 +168,7 @@ fn parseStoredMeta(val: clmdb.MDB_val) StoreError!StoredMeta {
     var event_id: ContactKey = undefined;
     @memcpy(event_id[0..], bytes[8..40]);
     return StoredMeta{
-        .created_at = std.mem.readIntLittle(u64, bytes[0..8]),
+        .created_at = std.mem.readInt(u64, bytes[0..8], .little),
         .event_id = event_id,
     };
 }
@@ -175,23 +176,23 @@ fn parseStoredMeta(val: clmdb.MDB_val) StoreError!StoredMeta {
 fn parseStoredList(self: *Store, val: clmdb.MDB_val) StoreError!ContactList {
     const bytes = mdbSliceConst(val);
     if (bytes.len < 44) return error.Corrupt;
-    const created_at = std.mem.readIntLittle(u64, bytes[0..8]);
+    const created_at = std.mem.readInt(u64, bytes[0..8], .little);
     var event_id: ContactKey = undefined;
     @memcpy(event_id[0..], bytes[8..40]);
-    const count = std.mem.readIntLittle(u32, bytes[40..44]);
-    const required = 44 + @as(usize, count) * ContactKey.len;
+    const count = std.mem.readInt(u32, bytes[40..44], .little);
+    const required = 44 + @as(usize, count) * KEY_LEN;
     if (bytes.len != required) return error.Corrupt;
 
     const follows_bytes = bytes[44..];
-    const count_usize = @intCast(usize, count);
+    const count_usize: usize = @intCast(count);
     const follows = try self.allocator.alloc(ContactKey, count_usize);
     errdefer self.allocator.free(follows);
 
     var offset: usize = 0;
     var idx: usize = 0;
     while (idx < count_usize) : (idx += 1) {
-        @memcpy(follows[idx][0..], follows_bytes[offset .. offset + ContactKey.len]);
-        offset += ContactKey.len;
+        @memcpy(follows[idx][0..], follows_bytes[offset .. offset + KEY_LEN]);
+        offset += KEY_LEN;
     }
 
     return ContactList{

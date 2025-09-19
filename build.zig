@@ -318,6 +318,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("cli_tests", cli_tests_module);
+
+    const smoke_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/smoke_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("smoke_tests", smoke_tests_module);
     if (target.result.os.tag == .macos) {
         configureAppleSdk(b, tests);
         tests.linkFramework("Security");
