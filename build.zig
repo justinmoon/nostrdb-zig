@@ -14,6 +14,8 @@ pub fn build(b: *std.Build) void {
 
     // Build the C library sources from nostrdb at the pinned commit
     const lib = b.addLibrary(.{ .name = "nostrdb_c", .linkage = .static, .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
+    // Ensure libc headers and symbols are available when compiling C sources
+    lib.linkLibC();
 
     // Common include paths for all C code
     // On ARM64, add our override directory first to provide a fixed config.h
@@ -212,6 +214,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    megalith.linkLibC();
     megalith.root_module.addImport("proto", proto_module);
     megalith.root_module.addImport("net", net_module);
     megalith.root_module.addImport("contacts", contacts_module);
@@ -236,6 +239,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    ssr_demo.linkLibC();
     ssr_demo.root_module.addImport("ndb", ndb_module);
     ssr_demo.root_module.addImport("proto", proto_module);
     if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
@@ -257,6 +261,7 @@ pub fn build(b: *std.Build) void {
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
+    tests.linkLibC();
 
     // Ensure @cImport("nostrdb.h") resolves for tests
     // On ARM64, add our override directory first to provide a fixed config.h

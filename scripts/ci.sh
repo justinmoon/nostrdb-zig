@@ -34,6 +34,8 @@ kernel32_lib_dir=
 gcc_dir=
 LIBC_EOF
   echo "Created libc config at $ZIG_LIBC_TXT"
+  # Ensure zig picks this up during build/cc
+  export ZIG_LIBC="$ZIG_LIBC_TXT"
 fi
 echo ""
 
