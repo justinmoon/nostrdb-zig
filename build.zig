@@ -11,14 +11,15 @@ fn configureAppleSdk(b: *std.Build, step: *std.Build.Step.Compile) void {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const use_apple_sdk = b.option(bool, "use_apple_sdk", "Configure Apple SDK and link frameworks on macOS") orelse true;
 
     // Build the C library sources from nostrdb at the pinned commit
     const lib = b.addLibrary(.{ .name = "nostrdb_c", .linkage = .static, .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
 
     // Common include paths for all C code
-    // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        lib.addIncludePath(b.path("src/override")); // Our config.h override comes first
+    // Add our override directory early to provide fixed headers on Darwin and ARM64
+    if (target.result.os.tag == .macos or target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        lib.addIncludePath(b.path("src/override")); // Our overrides (config.h, random.h)
     }
     lib.addIncludePath(b.path("nostrdb/src"));
     lib.addIncludePath(b.path("nostrdb/src/bindings/c")); // For profile_reader.h
@@ -147,7 +148,7 @@ pub fn build(b: *std.Build) void {
     c_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
     c_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     c_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+    if (target.result.os.tag == .macos or target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         c_module.addIncludePath(b.path("src/override"));
     }
     proto_module.addImport("c", c_module);
@@ -156,7 +157,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+    if (target.result.os.tag == .macos or target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         ndb_module.addIncludePath(b.path("src/override"));
     }
     ndb_module.addIncludePath(b.path("nostrdb/src"));
@@ -218,7 +219,7 @@ pub fn build(b: *std.Build) void {
     megalith.root_module.addImport("timeline", timeline_module);
     megalith.root_module.addImport("ingest", ingest_module);
     megalith.root_module.addImport("ndb", ndb_module);
-    if (target.result.os.tag == .macos) {
+    if (target.result.os.tag == .macos and use_apple_sdk) {
         configureAppleSdk(b, megalith);
         megalith.linkFramework("Security");
     }
@@ -238,7 +239,7 @@ pub fn build(b: *std.Build) void {
     });
     ssr_demo.root_module.addImport("ndb", ndb_module);
     ssr_demo.root_module.addImport("proto", proto_module);
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+    if (target.result.os.tag == .macos or target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         ssr_demo.root_module.addIncludePath(b.path("src/override"));
     }
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/src"));
@@ -246,7 +247,7 @@ pub fn build(b: *std.Build) void {
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
-    if (target.result.os.tag == .macos) {
+    if (target.result.os.tag == .macos and use_apple_sdk) {
         configureAppleSdk(b, ssr_demo);
         ssr_demo.linkFramework("Security");
     }
@@ -260,7 +261,7 @@ pub fn build(b: *std.Build) void {
 
     // Ensure @cImport("nostrdb.h") resolves for tests
     // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+    if (target.result.os.tag == .macos or target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         tests.root_module.addIncludePath(b.path("src/override"));
     }
     tests.root_module.addIncludePath(b.path("nostrdb/src"));
@@ -318,7 +319,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("cli_tests", cli_tests_module);
-    if (target.result.os.tag == .macos) {
+    if (target.result.os.tag == .macos and use_apple_sdk) {
         configureAppleSdk(b, tests);
         tests.linkFramework("Security");
     }

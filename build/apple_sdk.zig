@@ -9,6 +9,31 @@ pub fn addPaths(
     var target_copy = step.rootModuleTarget();
     const target = target_copy;
 
+    // Nix-friendly fast path: honor environment variables if provided.
+    // This allows configuring framework and include paths without
+    // probing Xcode/CommandLineTools which are not available in Nix sandboxes.
+    if (std.process.getEnvVarOwned(b.allocator, "APPLE_SDK_FRAMEWORKS")) |fw| {
+        defer b.allocator.free(fw);
+        step.root_module.addSystemFrameworkPath(.{ .cwd_relative = fw });
+
+        if (std.process.getEnvVarOwned(b.allocator, "APPLE_SDK_SYSTEM_INCLUDE")) |inc| {
+            defer b.allocator.free(inc);
+            step.root_module.addSystemIncludePath(.{ .cwd_relative = inc });
+        } else |_| {}
+
+        if (std.process.getEnvVarOwned(b.allocator, "APPLE_SDK_LIBRARY")) |lib| {
+            defer b.allocator.free(lib);
+            step.root_module.addLibraryPath(.{ .cwd_relative = lib });
+        } else |_| {}
+
+        if (std.process.getEnvVarOwned(b.allocator, "APPLE_SDK_LIBC_FILE")) |libcfile| {
+            defer b.allocator.free(libcfile);
+            step.setLibCFile(.{ .cwd_relative = libcfile });
+        } else |_| {}
+
+        return;
+    } else |_| {}
+
     const cache = struct {
         const Key = struct {
             arch: std.Target.Cpu.Arch,
