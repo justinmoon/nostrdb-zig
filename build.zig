@@ -111,6 +111,8 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_ECDH", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
+    // Avoid UB from unaligned uint32_t loads in CCAN sha256 when Zig enforces alignment
+    lib.root_module.addCMacro("HAVE_UNALIGNED_ACCESS", "0");
 
     // Debug flags similar to build.rs
     switch (optimize) {
