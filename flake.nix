@@ -145,6 +145,10 @@
 
           nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
 
+          configurePhase = ''
+            echo "Skipping configure phase (Zig project)"
+          '';
+
           buildPhase = ''
             set -euo pipefail
             export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -218,6 +222,10 @@
           src = ./.;
 
           nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+
+          configurePhase = ''
+            echo "Skipping configure phase (Zig project)"
+          '';
 
           buildPhase = ''
             set -euo pipefail
