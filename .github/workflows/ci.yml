@@ -12,16 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Initialize submodules
-        run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive --depth 1
+      # submodules are fetched by actions/checkout above
 
       - name: Run CI tests with Nix
         run: |
