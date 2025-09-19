@@ -11,7 +11,7 @@ pub fn main() !void {
     var url: ?[]const u8 = null;
     var origin: []const u8 = "https://nostrdb-ssr.local";
     var npub: ?[]const u8 = null;
-    var author_hex: ?[]const u8 = null;
+    var author_hex: ?[]const u8 = null; // deprecated input; prefer --npub
     var post_limit: usize = 5;
     var timeout_ms: u32 = 20_000;
 
@@ -164,7 +164,7 @@ pub fn main() !void {
                     if (std.mem.eql(u8, sub, sub_profiles)) {
                         updateNameMap(allocator, d, &names) catch {};
                     } else if (std.mem.eql(u8, sub, sub_posts)) {
-                        if (printPostLine(allocator, d, &names)) |did| {
+                        if (printPostLine(allocator, d, &names, follows.items)) |did| {
                             if (did) printed += 1;
                         } else |_| {}
                     }
@@ -185,7 +185,7 @@ pub fn main() !void {
 
 fn usage() !void {
     const s = "Usage: ws-contacts --url wss://relay --npub <npub> [--origin URL] [--limit N] [--timeout ms]\n" ++
-        "   or: ws-contacts --url wss://relay --author-hex <64hex> [--origin URL]\n";
+        "   (deprecated) --author-hex <64hex> also accepted\n";
     try std.fs.File.stdout().writeAll(s);
 }
 
@@ -292,7 +292,7 @@ fn updateNameMap(allocator: Allocator, frame: []const u8, names: *std.StringHash
     try names.put(key, val);
 }
 
-fn printPostLine(allocator: Allocator, frame: []const u8, names: *std.StringHashMap([]const u8)) !bool {
+fn printPostLine(allocator: Allocator, frame: []const u8, names: *std.StringHashMap([]const u8), follows: []const []const u8) !bool {
     const start = std.mem.indexOfScalar(u8, frame, '{') orelse return false;
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame[start..frame.len - 1], .{});
     defer parsed.deinit();
@@ -303,6 +303,12 @@ fn printPostLine(allocator: Allocator, frame: []const u8, names: *std.StringHash
     if (id_v != .string or pk_v != .string or content_v != .string) return false;
     const ev_id = id_v.string;
     const pk = pk_v.string;
+    // Sanity: ensure the post's author is in our follows set
+    var is_followed = false;
+    for (follows) |fpk| {
+        if (std.mem.eql(u8, fpk, pk)) { is_followed = true; break; }
+    }
+    if (!is_followed) return false;
     const content = content_v.string;
     const display = blk: {
         if (names.get(pk)) |n| break :blk n;
