@@ -11,19 +11,120 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef enum OpenmlsProcessedMessageType {
+  Application = 0,
+  Proposal = 1,
+  Commit = 2,
+  ExternalJoinProposal = 3,
+  Other = 255,
+} OpenmlsProcessedMessageType;
+
+typedef struct OpenmlsFfiBuffer {
+  uint8_t *data;
+  uintptr_t len;
+} OpenmlsFfiBuffer;
+
 typedef int openmls_status_t;
+
+typedef struct OpenmlsExtensionInput {
+  uint16_t extension_type;
+  struct OpenmlsFfiBuffer data;
+} OpenmlsExtensionInput;
 
 #define OPENMLS_STATUS_OK 0
 
-/**
- * Returns a pointer to a static, null-terminated string describing the FFI layer version.
- * Caller must not free the returned pointer.
- */
+#define OPENMLS_STATUS_ERROR 1
+
+#define OPENMLS_STATUS_NULL_POINTER 2
+
+#define OPENMLS_STATUS_INVALID_ARGUMENT 3
+
+void openmls_ffi_buffer_free(struct OpenmlsFfiBuffer buffer);
+
+int32_t openmls_ffi_buffer_init_empty(struct OpenmlsFfiBuffer *out_buffer);
+
+openmls_status_t openmls_ffi_group_create(void *provider,
+                                          const char *creator_identity_hex,
+                                          uint16_t ciphersuite_value,
+                                          const uint16_t *required_extension_types,
+                                          uintptr_t required_extension_len,
+                                          const struct OpenmlsExtensionInput *additional_extensions,
+                                          uintptr_t additional_extensions_len,
+                                          const struct OpenmlsFfiBuffer *key_packages,
+                                          uintptr_t key_package_len,
+                                          bool use_ratchet_tree_extension,
+                                          struct OpenmlsFfiBuffer *out_group_id,
+                                          struct OpenmlsFfiBuffer *out_commit_message,
+                                          struct OpenmlsFfiBuffer *out_welcome_message,
+                                          struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_add_members(void *provider,
+                                               const struct OpenmlsFfiBuffer *group_id,
+                                               const struct OpenmlsFfiBuffer *key_packages,
+                                               uintptr_t key_package_len,
+                                               struct OpenmlsFfiBuffer *out_commit_message,
+                                               struct OpenmlsFfiBuffer *out_welcome_message,
+                                               struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_remove_members(void *provider,
+                                                  const struct OpenmlsFfiBuffer *group_id,
+                                                  const uint32_t *leaf_indices,
+                                                  uintptr_t leaf_indices_len,
+                                                  struct OpenmlsFfiBuffer *out_commit_message,
+                                                  struct OpenmlsFfiBuffer *out_welcome_message,
+                                                  struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_self_update(void *provider,
+                                               const struct OpenmlsFfiBuffer *group_id,
+                                               struct OpenmlsFfiBuffer *out_commit_message,
+                                               struct OpenmlsFfiBuffer *out_welcome_message,
+                                               struct OpenmlsFfiBuffer *out_group_info);
+
+openmls_status_t openmls_ffi_group_leave(void *provider,
+                                         const struct OpenmlsFfiBuffer *group_id,
+                                         struct OpenmlsFfiBuffer *out_message);
+
+openmls_status_t openmls_ffi_group_merge_pending_commit(void *provider,
+                                                        const struct OpenmlsFfiBuffer *group_id);
+
+openmls_status_t openmls_ffi_key_package_create(void *provider,
+                                                const char *identity_hex,
+                                                uint16_t ciphersuite_value,
+                                                const uint16_t *extension_types,
+                                                uintptr_t extension_len,
+                                                bool mark_as_last_resort,
+                                                struct OpenmlsFfiBuffer *out_key_package);
+
+openmls_status_t openmls_ffi_message_encrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *plaintext,
+                                             struct OpenmlsFfiBuffer *out_ciphertext);
+
+openmls_status_t openmls_ffi_message_decrypt(void *provider,
+                                             const struct OpenmlsFfiBuffer *group_id,
+                                             const struct OpenmlsFfiBuffer *ciphertext,
+                                             struct OpenmlsFfiBuffer *out_plaintext,
+                                             enum OpenmlsProcessedMessageType *out_message_type);
+
 const char *openmls_ffi_version(void);
 
-/**
- * Simple smoketest that instantiates the default crypto provider and returns OK.
- */
 openmls_status_t openmls_ffi_smoketest(void);
+
+void *openmls_ffi_provider_new_default(void);
+
+void openmls_ffi_provider_free(void *provider);
+
+openmls_status_t openmls_ffi_welcome_parse(void *provider,
+                                           const struct OpenmlsFfiBuffer *welcome_message,
+                                           const struct OpenmlsFfiBuffer *ratchet_tree,
+                                           bool use_ratchet_tree_extension,
+                                           void **out_staged_welcome,
+                                           struct OpenmlsFfiBuffer *out_group_context);
+
+openmls_status_t openmls_ffi_welcome_join(void *provider,
+                                          void *staged_welcome,
+                                          struct OpenmlsFfiBuffer *out_group_id);
+
+void openmls_ffi_welcome_free(void *staged_welcome);
 
 #endif /* OPENMLS_FFI_H */

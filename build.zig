@@ -326,4 +326,28 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run Phase 1 tests");
     test_step.dependOn(&run_tests.step);
+
+    const is_native = target.query.cpu_arch == null and target.query.os_tag == null and target.query.abi == null;
+    if (is_native) {
+        const cargo_build = b.addSystemCommand(&[_][]const u8{ "cargo", "build" });
+        const manifest_path = b.path("vendor/openmls-ffi/Cargo.toml");
+        cargo_build.addArgs(&.{ "--manifest-path", manifest_path.getPath(b) });
+
+        const openmls_ffi_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/openmls_ffi.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        openmls_ffi_test.step.dependOn(&cargo_build.step);
+        openmls_ffi_test.root_module.addIncludePath(b.path("vendor/openmls-ffi/include"));
+        openmls_ffi_test.addLibraryPath(b.path("vendor/openmls-ffi/target/debug"));
+        openmls_ffi_test.addRPath(b.path("vendor/openmls-ffi/target/debug"));
+        openmls_ffi_test.linkSystemLibrary("openmls_ffi");
+
+        const run_openmls_ffi = b.addRunArtifact(openmls_ffi_test);
+        const openmls_step = b.step("openmls-ffi-test", "Run OpenMLS FFI tests");
+        openmls_step.dependOn(&run_openmls_ffi.step);
+    }
 }

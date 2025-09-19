@@ -16,5 +16,11 @@ To use from Zig:
    `@cImport({ @cInclude("openmls_ffi.h"); });`.
 3. Link against `openmls_ffi` by adding the appropriate library search path and `-lopenmls_ffi`.
 
-The library currently exposes discovery helpers (`openmls_ffi_version`, `openmls_ffi_smoketest`).
-Additional bindings will extend the header automatically when new APIs are exported.
+The library currently exposes discovery helpers (`openmls_ffi_version`,
+`openmls_ffi_smoketest`), a default provider constructor
+(`openmls_ffi_provider_new_default` / `openmls_ffi_provider_free`), key package construction
+(`openmls_ffi_key_package_create`, `openmls_ffi_buffer_free`), initial group creation
+(`openmls_ffi_group_create`), welcome processing (`openmls_ffi_welcome_parse`,
+`openmls_ffi_welcome_join`, `openmls_ffi_welcome_free`), and basic message handling
+(`openmls_ffi_message_encrypt`, `openmls_ffi_message_decrypt`). Additional bindings will extend
+the header automatically when new APIs are exported.
