@@ -296,6 +296,19 @@ pub fn build(b: *std.Build) void {
     const ws_contacts_step = b.step("ws-contacts", "Build the contacts+posts smoke client");
     ws_contacts_step.dependOn(&install_ws_contacts.step);
 
+    const ws_contacts_server = b.addExecutable(.{
+        .name = "ws-contacts-server",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/ws_contacts_server.zig"), .target = target, .optimize = optimize }),
+    });
+    ws_contacts_server.root_module.addImport("websocket", websocket_pkg.module("websocket"));
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, ws_contacts_server);
+        ws_contacts_server.linkFramework("Security");
+    }
+    const install_ws_contacts_server = b.addInstallArtifact(ws_contacts_server, .{});
+    const ws_contacts_server_step = b.step("ws-contacts-server", "Build the contacts+posts SSR demo server");
+    ws_contacts_server_step.dependOn(&install_ws_contacts_server.step);
+
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
 
