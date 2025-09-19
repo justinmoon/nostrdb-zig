@@ -149,10 +149,14 @@
             set -euo pipefail
             export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-          if [ -d .git ]; then
-            ${pkgs.git}/bin/git submodule update --init --recursive
-          fi
+            if [ -d .git ]; then
+              ${pkgs.git}/bin/git submodule update --init --recursive
+            fi
             export PATH="${zigPkg}/bin:$PATH"
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+            export CPATH="${pkgs.stdenv.cc.libc.dev}/include"
+            export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib"
             ${zigPkg}/bin/zig build ssr-demo -Doptimize=ReleaseSafe --prefix $out
           '';
 
@@ -191,17 +195,47 @@
             
             # Set up Zig paths
             export PATH="${zigPkg}/bin:$PATH"
-            
+            export CPATH="${pkgs.stdenv.cc.libc.dev}/include"
+            export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib"
+
             # Build with release optimization
             ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe --prefix $out
             
             # Also build megalith CLI  
             ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe --prefix $out
           '';
-          
+
           installPhase = ''
             # The zig build system handles installation with --prefix
             echo "Installation completed by zig build"
+          '';
+        };
+
+        packages.ws-contacts-server = pkgs.stdenv.mkDerivation {
+          pname = "ws-contacts-server";
+          version = "0.0.1";
+
+          src = ./.;
+
+          nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+
+          buildPhase = ''
+            set -euo pipefail
+            export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            if [ -d .git ]; then
+              ${pkgs.git}/bin/git submodule update --init --recursive
+            fi
+            export PATH="${zigPkg}/bin:$PATH"
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+            export CPATH="${pkgs.stdenv.cc.libc.dev}/include"
+            export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib"
+            ${zigPkg}/bin/zig build ws-contacts-server -Doptimize=ReleaseSafe --prefix $out
+          '';
+          
+          installPhase = ''
+            echo "Installed ws-contacts-server to $out/bin"
           '';
         };
         
