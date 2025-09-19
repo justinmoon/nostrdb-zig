@@ -18,12 +18,10 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clone nostrdb with submodules
+      - name: Initialize submodules
         run: |
-          git clone https://github.com/damus-io/nostrdb.git --depth 1
-          cd nostrdb
+          git submodule sync --recursive
           git submodule update --init --recursive --depth 1
-          cd ..
 
       - name: Run CI tests with Nix
         run: |
