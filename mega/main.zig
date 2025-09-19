@@ -1,3 +1,4 @@
+// moved from ssr/main.zig unchanged
 const std = @import("std");
 const ndb = @import("ndb");
 const proto = @import("proto");
@@ -325,25 +326,18 @@ fn renderTimelinePage(
     errdefer list.deinit(allocator);
     var w = list.writer(allocator);
 
-    try writePageHead(&w, "nostr timeline");
+    try writePageHead(&w, "nostrdb SSR demo");
     try w.writeAll("<main>\n");
     try writeLookupForm(&w, npub_value);
-
-    var pubkey_buf: [64]u8 = undefined;
-    const pubkey_hex = try hexEncodeLower(&pubkey_buf, pubkey[0..]);
-    try w.print(
-        "<section class=\"timeline\">\n<h2>Timeline for <code>{s}</code></h2>\n<p class=\"meta\">pubkey hex: <code>{s}</code> &mdash; showing up to {d} text notes</p>\n",
-        .{ npub_value, pubkey_hex, notes.len },
-    );
-
     if (notes.len == 0) {
-        try w.writeAll("<p class=\"empty\">No posts found in the local database.</p>\n");
-    } else {
-        for (notes) |result| {
-            try writeNote(&w, result.note);
-        }
+        try w.writeAll("<section class=\\"timeline\\">\n<div class=\\"empty\\">No posts found for that npub.</div>\n</section>\n");
+        try writeSampleDataHelp(&w);
+        try w.writeAll("</main>\n</body></html>");
+        return try list.toOwnedSlice(allocator);
     }
 
+    try w.writeAll("<section class=\\"timeline\\">\n<h2>Recent posts</h2>\n");
+    for (notes) |res| try writeNote(&w, res.note);
     try w.writeAll("</section>\n");
     try writeSampleDataHelp(&w);
     try w.writeAll("</main>\n</body></html>");
@@ -421,7 +415,7 @@ fn htmlEscape(writer: anytype, text: []const u8) !void {
         '&' => try writer.writeAll("&amp;"),
         '<' => try writer.writeAll("&lt;"),
         '>' => try writer.writeAll("&gt;"),
-        '\"' => try writer.writeAll("&quot;"),
+        '"' => try writer.writeAll("&quot;"),
         '\'' => try writer.writeAll("&#39;"),
         else => try writer.writeByte(ch),
     };
@@ -458,3 +452,4 @@ fn formatTimestamp(writer: anytype, ts: u32) !void {
         },
     );
 }
+

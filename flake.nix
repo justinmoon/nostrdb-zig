@@ -166,8 +166,8 @@
             '';
           };
         } // pkgs.lib.optionalAttrs (!pkgs.stdenv.isDarwin) {
-          ssr-demo = pkgs.stdenv.mkDerivation {
-            pname = "nostrdb-ssr-demo";
+          mega = pkgs.stdenv.mkDerivation {
+            pname = "mega";
             version = "0.0.1";
             src = ./.;
             nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
@@ -188,10 +188,10 @@
                 rm -rf nostrdb
                 cp -R ${nostrdb} nostrdb
               fi
-              ${zigPkg}/bin/zig build ssr-demo -Doptimize=ReleaseSafe --prefix $out
+              ${zigPkg}/bin/zig build mega -Doptimize=ReleaseSafe --prefix $out
             '';
             installPhase = ''
-              echo "Installation completed by zig build (ssr-demo)"
+              echo "Installation completed by zig build (mega)"
             '';
             meta.platforms = [ "x86_64-linux" "aarch64-linux" ];
           };
@@ -201,16 +201,7 @@
         apps = {
           ci = { type = "app"; program = "${ciScript}/bin/ci"; };
         } // pkgs.lib.optionalAttrs (!pkgs.stdenv.isDarwin) {
-          "ssr-demo" = { type = "app"; program = "${self.packages.${system}.ssr-demo}/bin/ssr-demo"; };
+          mega = { type = "app"; program = "${self.packages.${system}.mega}/bin/mega"; };
         };
-      }) // {
-        nixosModules = {
-          ssr-demo = import ./nix/modules/ssr-demo.nix;
-        };
-        nix = {
-          examples = {
-            caddy-ssr-demo = import ./nix/examples/caddy-ssr-demo.nix;
-          };
-        };
-      };
+      });
 }

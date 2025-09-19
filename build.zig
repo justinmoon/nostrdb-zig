@@ -231,7 +231,7 @@ pub fn build(b: *std.Build) void {
     const ssr_demo = b.addExecutable(.{
         .name = "ssr-demo",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("ssr/main.zig"),
+            .root_source_file = b.path("mega/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -259,37 +259,39 @@ pub fn build(b: *std.Build) void {
     const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
     ssr_step.dependOn(&install_ssr.step);
 
-    // Alias build target for Hetzner deployment convenience
-    const megalith_ssr = b.addExecutable(.{
-        .name = "megalith-ssr",
+    // New: build the same server under the name "mega"
+    const mega_exe = b.addExecutable(.{
+        .name = "mega",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("hetzner/megalith.zig"),
+            .root_source_file = b.path("mega/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    megalith_ssr.root_module.addImport("ndb", ndb_module);
-    megalith_ssr.root_module.addImport("proto", proto_module);
+    mega_exe.root_module.addImport("ndb", ndb_module);
+    mega_exe.root_module.addImport("proto", proto_module);
     if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        megalith_ssr.root_module.addIncludePath(b.path("src/override"));
+        mega_exe.root_module.addIncludePath(b.path("src/override"));
     }
-    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/src"));
-    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/ccan"));
-    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
-    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
-    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    mega_exe.root_module.addIncludePath(b.path("nostrdb/src"));
+    mega_exe.root_module.addIncludePath(b.path("nostrdb/ccan"));
+    mega_exe.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    mega_exe.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    mega_exe.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
     if (target.result.os.tag == .macos) {
-        configureAppleSdk(b, megalith_ssr);
-        megalith_ssr.linkFramework("Security");
+        configureAppleSdk(b, mega_exe);
+        mega_exe.linkFramework("Security");
     }
     if (target.result.os.tag == .linux) {
-        megalith_ssr.linkLibC();
-        megalith_ssr.linkSystemLibrary("pthread");
+        mega_exe.linkLibC();
+        mega_exe.linkSystemLibrary("pthread");
     }
-    megalith_ssr.linkLibrary(lib);
-    const install_megalith_ssr = b.addInstallArtifact(megalith_ssr, .{});
-    const megalith_ssr_step = b.step("megalith-ssr", "Build the Hetzner SSR server (alias of ssr-demo)");
-    megalith_ssr_step.dependOn(&install_megalith_ssr.step);
+    mega_exe.linkLibrary(lib);
+    const install_mega = b.addInstallArtifact(mega_exe, .{});
+    const mega_step = b.step("mega", "Build the Mega SSR server");
+    mega_step.dependOn(&install_mega.step);
+
+    // (megalith-ssr alias removed; keep only ssr-demo target)
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
