@@ -18,10 +18,8 @@ pub fn build(b: *std.Build) void {
     lib.linkLibC();
 
     // Common include paths for all C code
-    // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        lib.addIncludePath(b.path("src/override")); // Our config.h override comes first
-    }
+    // Always add our override directory first to provide a fixed config.h
+    lib.addIncludePath(b.path("src/override"));
     lib.addIncludePath(b.path("nostrdb/src"));
     lib.addIncludePath(b.path("nostrdb/src/bindings/c")); // For profile_reader.h
     lib.addIncludePath(b.path("nostrdb/ccan"));
@@ -111,8 +109,6 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_ECDH", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
-    // Avoid UB from unaligned uint32_t loads in CCAN sha256 when Zig enforces alignment
-    lib.root_module.addCMacro("HAVE_UNALIGNED_ACCESS", "0");
 
     // Debug flags similar to build.rs
     switch (optimize) {
@@ -146,6 +142,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    c_module.addIncludePath(b.path("src/override"));
     c_module.addIncludePath(b.path("nostrdb/src"));
     c_module.addIncludePath(b.path("nostrdb/ccan"));
     c_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -160,9 +157,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        ndb_module.addIncludePath(b.path("src/override"));
-    }
+    ndb_module.addIncludePath(b.path("src/override"));
     ndb_module.addIncludePath(b.path("nostrdb/src"));
     ndb_module.addIncludePath(b.path("nostrdb/src/bindings/c"));
     ndb_module.addIncludePath(b.path("nostrdb/ccan"));
@@ -244,9 +239,7 @@ pub fn build(b: *std.Build) void {
     ssr_demo.linkLibC();
     ssr_demo.root_module.addImport("ndb", ndb_module);
     ssr_demo.root_module.addImport("proto", proto_module);
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        ssr_demo.root_module.addIncludePath(b.path("src/override"));
-    }
+    ssr_demo.root_module.addIncludePath(b.path("src/override"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/src"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/ccan"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -266,10 +259,7 @@ pub fn build(b: *std.Build) void {
     tests.linkLibC();
 
     // Ensure @cImport("nostrdb.h") resolves for tests
-    // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        tests.root_module.addIncludePath(b.path("src/override"));
-    }
+    tests.root_module.addIncludePath(b.path("src/override"));
     tests.root_module.addIncludePath(b.path("nostrdb/src"));
     tests.root_module.addIncludePath(b.path("nostrdb/ccan"));
     tests.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
