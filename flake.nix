@@ -149,6 +149,9 @@
           doStrip = false;
           stripAllList = [ ];
           dontFixup = true;
+          fixupPhase = ''
+            echo "Skipping fixup phase"
+          '';
 
           configurePhase = ''
             echo "Skipping configure phase (Zig project)"
