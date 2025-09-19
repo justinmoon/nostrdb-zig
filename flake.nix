@@ -148,6 +148,7 @@
           dontStrip = true;
           doStrip = false;
           stripAllList = [ ];
+          dontFixup = true;
 
           configurePhase = ''
             echo "Skipping configure phase (Zig project)"
