@@ -247,6 +247,7 @@
             mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
             export CPATH="${pkgs.stdenv.cc.libc.dev}/include"
             export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib"
+            export STRIP="${pkgs.coreutils}/bin/true"
             ${zigPkg}/bin/zig build ws-contacts-server -Doptimize=ReleaseSafe --prefix $out
           '';
           
