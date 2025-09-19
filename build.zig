@@ -238,6 +238,10 @@ pub fn build(b: *std.Build) void {
     });
     ssr_demo.root_module.addImport("ndb", ndb_module);
     ssr_demo.root_module.addImport("proto", proto_module);
+    ssr_demo.root_module.addImport("net", net_module);
+    ssr_demo.root_module.addImport("contacts", contacts_module);
+    ssr_demo.root_module.addImport("timeline", timeline_module);
+    ssr_demo.root_module.addImport("ingest", ingest_module);
     if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         ssr_demo.root_module.addIncludePath(b.path("src/override"));
     }

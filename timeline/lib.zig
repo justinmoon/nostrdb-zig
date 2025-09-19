@@ -84,17 +84,17 @@ pub const Store = struct {
         try check(clmdb.mdb_txn_begin(env_ptr.?, null, 0, &txn_ptr));
         errdefer clmdb.mdb_txn_abort(txn_ptr.?);
 
-        const timeline_name = try std.cstr.addNullByte(allocator, "timeline_entries");
+        const timeline_name = try allocator.dupeZ(u8, "timeline_entries");
         defer allocator.free(timeline_name);
         var timeline_dbi: clmdb.MDB_dbi = undefined;
         try check(clmdb.mdb_dbi_open(txn_ptr.?, @ptrCast(timeline_name.ptr), clmdb.MDB_CREATE, &timeline_dbi));
 
-        const events_name = try std.cstr.addNullByte(allocator, "timeline_events");
+        const events_name = try allocator.dupeZ(u8, "timeline_events");
         defer allocator.free(events_name);
         var events_dbi: clmdb.MDB_dbi = undefined;
         try check(clmdb.mdb_dbi_open(txn_ptr.?, @ptrCast(events_name.ptr), clmdb.MDB_CREATE, &events_dbi));
 
-        const meta_name = try std.cstr.addNullByte(allocator, "timeline_meta");
+        const meta_name = try allocator.dupeZ(u8, "timeline_meta");
         defer allocator.free(meta_name);
         var meta_dbi: clmdb.MDB_dbi = undefined;
         try check(clmdb.mdb_dbi_open(txn_ptr.?, @ptrCast(meta_name.ptr), clmdb.MDB_CREATE, &meta_dbi));
@@ -141,7 +141,7 @@ pub fn insertEvent(
     const total_len = header_len + record_payload.len;
     var event_buf = try store.allocator.alloc(u8, total_len);
     defer store.allocator.free(event_buf);
-    std.mem.writeIntLittle(u64, event_buf[0..8], entry.created_at);
+    std.mem.writeInt(u64, event_buf[0..8], entry.created_at, .little);
     @memcpy(event_buf[8..40], entry.author[0..]);
     @memcpy(event_buf[40..], record_payload);
 
@@ -155,7 +155,7 @@ pub fn insertEvent(
     var timeline_key = mdbVal(timeline_key_buf[0..]);
 
     var timeline_val_buf: [40]u8 = undefined;
-    std.mem.writeIntLittle(u64, timeline_val_buf[0..8], entry.created_at);
+    std.mem.writeInt(u64, timeline_val_buf[0..8], entry.created_at, .little);
     @memcpy(timeline_val_buf[8..40], entry.author[0..]);
     var timeline_val = mdbVal(timeline_val_buf[0..]);
 
@@ -168,7 +168,7 @@ pub fn insertEvent(
         return mapError(put_timeline_rc);
     }
 
-    var entries = try loadEntriesInternal(store, txn_ptr.?, npub);
+    const entries = try loadEntriesInternal(store, txn_ptr.?, npub);
     defer store.allocator.free(entries);
     sortEntries(entries);
 
@@ -232,7 +232,7 @@ pub fn loadTimeline(store: *Store, npub: PubKey) StoreError!TimelineSnapshot {
     try check(clmdb.mdb_txn_begin(store.env, null, clmdb.MDB_RDONLY, &txn_ptr));
     defer clmdb.mdb_txn_abort(txn_ptr.?);
 
-    var entries = try loadEntriesInternal(store, txn_ptr.?, npub);
+    const entries = try loadEntriesInternal(store, txn_ptr.?, npub);
     errdefer store.allocator.free(entries);
 
     sortEntries(entries);
@@ -268,7 +268,7 @@ pub fn getEvent(store: *Store, id: EventId) StoreError!?EventRecord {
     const bytes = mdbSliceConst(val);
     if (bytes.len < 40) return error.Corrupt;
 
-    const created_at = std.mem.readIntLittle(u64, bytes[0..8]);
+    const created_at = std.mem.readInt(u64, bytes[0..8], .little);
     var author: PubKey = undefined;
     @memcpy(author[0..], bytes[8..40]);
     const payload_slice = bytes[40..];
@@ -297,7 +297,7 @@ fn makeTimelineKey(npub: PubKey, event_id: EventId) [64]u8 {
 }
 
 fn sortEntries(entries: []TimelineEntry) void {
-    std.sort.sort(TimelineEntry, entries, {}, lessThanTimeline);
+    std.sort.block(TimelineEntry, entries, {}, lessThanTimeline);
 }
 
 fn lessThanTimeline(_: void, lhs: TimelineEntry, rhs: TimelineEntry) bool {
@@ -312,8 +312,8 @@ fn loadEntriesInternal(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey) StoreEr
     try check(clmdb.mdb_cursor_open(txn, store.timeline_dbi, &cursor_ptr));
     defer clmdb.mdb_cursor_close(cursor_ptr.?);
 
-    var entries = std.ArrayList(TimelineEntry).init(store.allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(TimelineEntry).empty;
+    errdefer entries.deinit(store.allocator);
 
     var key_buf: [64]u8 = undefined;
     @memcpy(key_buf[0..32], npub[0..]);
@@ -333,13 +333,13 @@ fn loadEntriesInternal(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey) StoreEr
 
         var entry = TimelineEntry{
             .event_id = undefined,
-            .created_at = std.mem.readIntLittle(u64, value_bytes[0..8]),
+            .created_at = std.mem.readInt(u64, value_bytes[0..8], .little),
             .author = undefined,
         };
         @memcpy(entry.event_id[0..], key_bytes[32..64]);
         @memcpy(entry.author[0..], value_bytes[8..40]);
 
-        try entries.append(entry);
+        try entries.append(store.allocator, entry);
 
         rc = clmdb.mdb_cursor_get(cursor_ptr.?, &key, &value, clmdb.MDB_NEXT);
     }
@@ -348,7 +348,7 @@ fn loadEntriesInternal(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey) StoreEr
         return mapError(rc);
     }
 
-    return entries.toOwnedSlice();
+    return entries.toOwnedSlice(store.allocator);
 }
 
 fn readMeta(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey) StoreError!TimelineMeta {
@@ -364,16 +364,16 @@ fn readMeta(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey) StoreError!Timelin
     if (bytes.len < 16) return error.Corrupt;
 
     return TimelineMeta{
-        .latest_created_at = std.mem.readIntLittle(u64, bytes[0..8]),
-        .count = @intCast(usize, std.mem.readIntLittle(u64, bytes[8..16])),
+        .latest_created_at = std.mem.readInt(u64, bytes[0..8], .little),
+        .count = @as(usize, @intCast(std.mem.readInt(u64, bytes[8..16], .little))),
     };
 }
 
 fn writeMeta(store: *Store, txn: *clmdb.MDB_txn, npub: PubKey, meta: TimelineMeta) !void {
     var key = mdbVal(npub[0..]);
     var buf: [16]u8 = undefined;
-    std.mem.writeIntLittle(u64, buf[0..8], meta.latest_created_at);
-    std.mem.writeIntLittle(u64, buf[8..16], @intCast(u64, meta.count));
+    std.mem.writeInt(u64, buf[0..8], meta.latest_created_at, .little);
+    std.mem.writeInt(u64, buf[8..16], @as(u64, @intCast(meta.count)), .little);
     var value = mdbVal(buf[0..]);
     try check(clmdb.mdb_put(txn, store.meta_dbi, &key, &value, 0));
 }

@@ -1,6 +1,11 @@
 const std = @import("std");
 const ndb = @import("ndb");
 const proto = @import("proto");
+const contacts = @import("contacts");
+const timeline = @import("timeline");
+const ingest = @import("ingest");
+const net = @import("net");
+const ingest_service = @import("ingest_service.zig");
 
 const CliError = error{
     MissingValue,
@@ -16,11 +21,15 @@ const Settings = struct {
     db_path: []const u8,
     port: u16,
     limit: u32,
+    relays: []const []const u8,
 };
 
 const App = struct {
     allocator: std.mem.Allocator,
     db: *ndb.Ndb,
+    contacts_store: *contacts.Store,
+    timeline_store: *timeline.Store,
+    ingestion: *ingest_service.IngestionManager,
     limit: u32,
 
     fn handleConnection(self: *App, conn: *std.net.Server.Connection) !void {
@@ -74,6 +83,16 @@ const App = struct {
             return;
         }
 
+        if (std.mem.eql(u8, path, "/start")) {
+            try self.respondStart(req, parts.query);
+            return;
+        }
+
+        if (std.mem.eql(u8, path, "/status")) {
+            try self.respondStatus(req, parts.query);
+            return;
+        }
+
         try self.respondHome(req, null, "Unknown path — use the form below.");
     }
 
@@ -108,6 +127,19 @@ const App = struct {
             return;
         };
 
+        const mode = findQueryValue(query, "mode");
+        if (mode) |m| {
+            if (std.ascii.eqlIgnoreCase(m, "author")) {
+                try self.respondAuthorTimeline(req, alloc, npub, pubkey);
+                return;
+            }
+        }
+
+        // Default: timeline feed from LMDB timeline store
+        try self.respondFeedTimeline(req, alloc, npub, pubkey);
+    }
+
+    fn respondAuthorTimeline(self: *App, req: *std.http.Server.Request, alloc: std.mem.Allocator, npub_str: []const u8, pubkey: [32]u8) !void {
         var txn = try ndb.Transaction.begin(self.db);
         defer txn.end();
 
@@ -128,11 +160,122 @@ const App = struct {
         const count = try ndb.queryWithAllocator(&txn, filters[0..], results, alloc);
         std.mem.sort(ndb.QueryResult, results[0..count], {}, orderByCreatedDesc);
 
-        const body = try renderTimelinePage(alloc, npub, pubkey, results[0..count]);
+        const body = try renderTimelinePageAuthor(alloc, npub_str, pubkey, results[0..count]);
         try req.respond(body, .{
             .status = .ok,
             .keep_alive = false,
             .extra_headers = &.{.{ .name = "content-type", .value = "text/html; charset=utf-8" }},
+        });
+    }
+
+    fn respondFeedTimeline(self: *App, req: *std.http.Server.Request, alloc: std.mem.Allocator, npub_str: []const u8, pubkey: [32]u8) !void {
+        var snapshot = try timeline.loadTimeline(self.timeline_store, pubkey);
+        defer snapshot.deinit();
+
+        const total = snapshot.entries.len;
+        const display: usize = @min(@as(usize, @intCast(self.limit)), total);
+
+        var list = std.ArrayList(u8).empty;
+        errdefer list.deinit(alloc);
+        var w = list.writer(alloc);
+
+        try writePageHead(&w, "nostr timeline");
+        try w.writeAll("<main>\n");
+        try writeLookupForm(&w, npub_str);
+        try writeModeToggle(&w, npub_str, true);
+
+        var pubkey_buf: [64]u8 = undefined;
+        const pubkey_hex = try hexEncodeLower(&pubkey_buf, pubkey[0..]);
+        try w.print(
+            "<section class=\"timeline\">\n<h2>Feed for <code>{s}</code></h2>\n<p class=\"meta\">pubkey hex: <code>{s}</code> &mdash; {d} stored, showing up to {d}</p>\n",
+            .{ npub_str, pubkey_hex, total, display },
+        );
+
+        try writeStatusBanner(&w, npub_str);
+
+        if (display == 0) {
+            try w.writeAll("<p class=\"empty\">No posts yet — ingestion may be in progress. <a href=\"#\" id=\"start-link\">Start ingestion</a>.</p>\n");
+        } else {
+            var i: usize = 0;
+            while (i < display) : (i += 1) {
+                const entry = snapshot.entries[i];
+                if (try timeline.getEvent(self.timeline_store, entry.event_id)) |record_val| {
+                    var record = record_val;
+                    defer record.deinit();
+                    const content = extractContent(alloc, record.payload) orelse record.payload;
+                    try writeEvent(&w, entry.created_at, entry.event_id, content);
+                }
+            }
+        }
+
+        try w.writeAll("</section>\n");
+        try writeSampleDataHelp(&w);
+        try w.writeAll("</main>\n</body></html>");
+
+        const body = try list.toOwnedSlice(alloc);
+
+        try req.respond(body, .{
+            .status = .ok,
+            .keep_alive = false,
+            .extra_headers = &.{.{ .name = "content-type", .value = "text/html; charset=utf-8" }},
+        });
+    }
+
+    fn respondStart(self: *App, req: *std.http.Server.Request, query: []const u8) !void {
+        const npub = findQueryValue(query, "npub") orelse {
+            try self.respondHome(req, null, "Provide an npub to start ingestion.");
+            return;
+        };
+        const pubkey = proto.decodeNpub(npub) catch {
+            try self.respondHome(req, npub, "Could not decode that npub.");
+            return;
+        };
+        // Start job
+        self.ingestion.ensureJob(pubkey) catch {};
+        // Redirect to /timeline
+        const location = try std.fmt.allocPrint(self.allocator, "/timeline?npub={s}", .{npub});
+        defer self.allocator.free(location);
+        _ = try req.respond("", .{
+            .status = .found,
+            .keep_alive = false,
+            .extra_headers = &.{
+                .{ .name = "location", .value = location },
+                .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+            },
+        });
+    }
+
+    fn respondStatus(self: *App, req: *std.http.Server.Request, query: []const u8) !void {
+        const npub = findQueryValue(query, "npub") orelse {
+            const msg = "{\"error\":\"missing npub\"}";
+            _ = try req.respond(msg, .{
+                .status = .bad_request,
+                .keep_alive = false,
+                .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+            });
+            return;
+        };
+        const pubkey = proto.decodeNpub(npub) catch {
+            const msg = "{\"error\":\"invalid npub\"}";
+            _ = try req.respond(msg, .{
+                .status = .bad_request,
+                .keep_alive = false,
+                .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+            });
+            return;
+        };
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const st = try self.ingestion.status(pubkey, alloc);
+        const json = try renderStatusJson(alloc, st);
+        defer alloc.free(json);
+        _ = try req.respond(json, .{
+            .status = .ok,
+            .keep_alive = false,
+            .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
         });
     }
 };
@@ -179,6 +322,23 @@ pub fn main() !void {
     var db = try ndb.Ndb.init(allocator, settings.db_path, &cfg);
     defer db.deinit();
 
+    // Open LMDB contacts and timeline stores under db_path
+    const contacts_dir = try std.fs.path.join(allocator, &.{ settings.db_path, "contacts" });
+    defer allocator.free(contacts_dir);
+    try std.fs.cwd().makePath(contacts_dir);
+    var contacts_store = try contacts.Store.init(allocator, .{ .path = contacts_dir });
+    defer contacts_store.deinit();
+
+    const timeline_dir = try std.fs.path.join(allocator, &.{ settings.db_path, "timeline" });
+    defer allocator.free(timeline_dir);
+    try std.fs.cwd().makePath(timeline_dir);
+    var timeline_store = try timeline.Store.init(allocator, .{ .path = timeline_dir, .max_entries = @intCast(settings.limit) });
+    defer timeline_store.deinit();
+
+    // Initialize ingestion manager
+    var ingestion_manager = try ingest_service.IngestionManager.init(allocator, settings.relays, settings.limit, &contacts_store, &timeline_store, &db);
+    defer ingestion_manager.deinit();
+
     const address = try std.net.Address.parseIp("0.0.0.0", settings.port);
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();
@@ -191,6 +351,9 @@ pub fn main() !void {
     var app = App{
         .allocator = allocator,
         .db = &db,
+        .contacts_store = &contacts_store,
+        .timeline_store = &timeline_store,
+        .ingestion = &ingestion_manager,
         .limit = settings.limit,
     };
 
@@ -214,6 +377,7 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
     var db_path = allocator.dupe(u8, "demo-db") catch return CliError.OutOfMemory;
     var port: u16 = 8080;
     var limit: u32 = 100;
+    var relays_list = std.ArrayList([]const u8).empty;
 
     while (iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--db-path")) {
@@ -235,6 +399,19 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--relays")) {
+            const value = iter.next() orelse return CliError.MissingValue;
+            // parse comma-separated relays
+            var it = std.mem.splitScalar(u8, value, ',');
+            while (it.next()) |item| {
+                const trimmed = std.mem.trim(u8, item, " ");
+                if (trimmed.len == 0) continue;
+                const owned = allocator.dupe(u8, trimmed) catch return CliError.OutOfMemory;
+                try relays_list.append(allocator, owned);
+            }
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             printHelp() catch |io_err| {
                 std.log.err("failed to print help: {s}", .{@errorName(io_err)});
@@ -245,10 +422,12 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
         return CliError.UnknownArgument;
     }
 
+    const relays = try relays_list.toOwnedSlice(allocator);
     return .{
         .db_path = db_path,
         .port = port,
         .limit = limit,
+        .relays = relays,
     };
 }
 
@@ -259,6 +438,7 @@ fn printHelp() !void {
         "  --db-path <dir>   LMDB directory to open or create (default: demo-db)\n" ++
         "  --port <port>     HTTP port to bind (default: 8080)\n" ++
         "  --limit <n>       Max posts to show per request (default: 100, max 1024)\n" ++
+        "  --relays <list>   Comma-separated relay URLs (for ingestion manager)\n" ++
         "  --help            Show this message\n\n" ++
         "Example (using sample events):\n" ++
         "  make testdata/many-events.json\n" ++
@@ -315,7 +495,7 @@ fn renderHome(allocator: std.mem.Allocator, npub_value: ?[]const u8, message: ?[
     return try list.toOwnedSlice(allocator);
 }
 
-fn renderTimelinePage(
+fn renderTimelinePageAuthor(
     allocator: std.mem.Allocator,
     npub_value: []const u8,
     pubkey: [32]u8,
@@ -328,6 +508,7 @@ fn renderTimelinePage(
     try writePageHead(&w, "nostr timeline");
     try w.writeAll("<main>\n");
     try writeLookupForm(&w, npub_value);
+    try writeModeToggle(&w, npub_value, false);
 
     var pubkey_buf: [64]u8 = undefined;
     const pubkey_hex = try hexEncodeLower(&pubkey_buf, pubkey[0..]);
@@ -351,12 +532,14 @@ fn renderTimelinePage(
     return try list.toOwnedSlice(allocator);
 }
 
+// feed rendering happens in respondFeedTimeline to access the store
+
 fn writePageHead(writer: anytype, title: []const u8) !void {
     try writer.writeAll(
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\"/>\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n<title>",
     );
     try htmlEscape(writer, title);
-    try writer.writeAll("</title>\n<style>\nbody{font-family:system-ui, sans-serif;margin:0;padding:24px;background:#0f172a;color:#e2e8f0;}\nmain{max-width:760px;margin:0 auto;}\nheader{margin-bottom:24px;}\nform.lookup{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0;padding:16px;background:#1e293b;border-radius:8px;}\nform.lookup input{flex:1;min-width:220px;padding:8px 12px;font-size:16px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;}\nform.lookup button{padding:10px 18px;font-size:16px;border:none;border-radius:6px;background:#38bdf8;color:#0f172a;font-weight:600;cursor:pointer;}\n.hero{background:#1e293b;padding:24px;border-radius:12px;}\n.hero h1{margin:0 0 12px;font-size:28px;}\n.hero p{margin:6px 0;}\n.timeline{margin-top:32px;padding:20px;background:#1e293b;border-radius:12px;}\n.timeline h2{margin-top:0;}\n.timeline .note{margin:0 0 20px;padding:16px;border-radius:10px;background:#0f172a;border:1px solid #334155;}\n.timeline .note time{display:block;font-size:14px;color:#94a3b8;margin-bottom:6px;}\n.timeline .note pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;}\n.sample{margin-top:32px;padding:20px;background:#1e293b;border-radius:12px;}\n.flash{margin:0 0 16px;padding:14px;border-radius:8px;background:#f97316;color:#0f172a;font-weight:600;}\n.empty{padding:12px;border-radius:8px;background:#0f172a;border:1px dashed #334155;}\ncode{background:#0f172a;padding:2px 6px;border-radius:4px;border:1px solid #334155;}\na{color:#38bdf8;}\n</style>\n</head>\n<body>\n");
+    try writer.writeAll("</title>\n<style>\nbody{font-family:system-ui, sans-serif;margin:0;padding:24px;background:#0f172a;color:#e2e8f0;}\nmain{max-width:760px;margin:0 auto;}\nheader{margin-bottom:24px;}\nform.lookup{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0;padding:16px;background:#1e293b;border-radius:8px;}\nform.lookup input{flex:1;min-width:220px;padding:8px 12px;font-size:16px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;}\nform.lookup button{padding:10px 18px;font-size:16px;border:none;border-radius:6px;background:#38bdf8;color:#0f172a;font-weight:600;cursor:pointer;}\n.hero{background:#1e293b;padding:24px;border-radius:12px;}\n.hero h1{margin:0 0 12px;font-size:28px;}\n.hero p{margin:6px 0;}\n.timeline{margin-top:32px;padding:20px;background:#1e293b;border-radius:12px;}\n.timeline h2{margin-top:0;}\n.timeline .note{margin:0 0 20px;padding:16px;border-radius:10px;background:#0f172a;border:1px solid #334155;}\n.timeline .note time{display:block;font-size:14px;color:#94a3b8;margin-bottom:6px;}\n.timeline .note pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;}\n.sample{margin-top:32px;padding:20px;background:#1e293b;border-radius:12px;}\n.flash{margin:0 0 16px;padding:14px;border-radius:8px;background:#f97316;color:#0f172a;font-weight:600;}\n.empty{padding:12px;border-radius:8px;background:#0f172a;border:1px dashed #334155;}\ncode{background:#0f172a;padding:2px 6px;border-radius:4px;border:1px solid #334155;}\na{color:#38bdf8;}\n.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#0ea5e9;color:#00111a;font-weight:700;font-size:12px;margin-left:8px;}\n.status{display:flex;align-items:center;gap:10px;margin:10px 0 18px;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;}\n.spinner{width:12px;height:12px;border:2px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:spin 1s linear infinite;}\n@keyframes spin{to{transform:rotate(360deg)}}\n</style>\n</head>\n<body>\n");
 }
 
 fn writeHero(writer: anytype) !void {
@@ -370,6 +553,22 @@ fn writeLookupForm(writer: anytype, npub_value: ?[]const u8) !void {
     try writer.writeAll("<input id=\"npub\" name=\"npub\" type=\"text\" placeholder=\"npub1...\" value=\"");
     if (npub_value) |value| try htmlEscape(writer, value);
     try writer.writeAll("\"/>\n<button type=\"submit\">Show timeline</button>\n</form>\n");
+}
+
+fn writeModeToggle(writer: anytype, npub_value: []const u8, feed_mode: bool) !void {
+    try writer.writeAll("<p class=\"meta\">");
+    if (feed_mode) {
+        try writer.writeAll("Mode: feed <span class=\"badge\">follows</span> — ");
+        try writer.writeAll("<a href=\"/timeline?mode=author&npub=");
+        try htmlEscape(writer, npub_value);
+        try writer.writeAll("\">author debug</a>");
+    } else {
+        try writer.writeAll("Mode: <span class=\"badge\">author</span> — ");
+        try writer.writeAll("<a href=\"/timeline?npub=");
+        try htmlEscape(writer, npub_value);
+        try writer.writeAll("\">feed of follows</a>");
+    }
+    try writer.writeAll("</p>\n");
 }
 
 fn writeSampleDataHelp(writer: anytype) !void {
@@ -410,6 +609,18 @@ fn writeNote(writer: anytype, note: ndb.Note) !void {
     try writer.writeAll("</time>\n<p><code>");
     var id_buf: [64]u8 = undefined;
     const id_hex = try hexEncodeLower(&id_buf, id[0..]);
+    try writer.print("{s}", .{id_hex});
+    try writer.writeAll("</code></p>\n<pre>");
+    try htmlEscapeMultiline(writer, content);
+    try writer.writeAll("</pre>\n</article>\n");
+}
+
+fn writeEvent(writer: anytype, created_at: u64, event_id: [32]u8, content: []const u8) !void {
+    try writer.writeAll("<article class=\"note\">\n<time>");
+    try formatTimestamp(writer, @as(u32, @intCast(created_at)));
+    try writer.writeAll("</time>\n<p><code>");
+    var id_buf: [64]u8 = undefined;
+    const id_hex = try hexEncodeLower(&id_buf, event_id[0..]);
     try writer.print("{s}", .{id_hex});
     try writer.writeAll("</code></p>\n<pre>");
     try htmlEscapeMultiline(writer, content);
@@ -457,4 +668,112 @@ fn formatTimestamp(writer: anytype, ts: u32) !void {
             secs.getSecondsIntoMinute(),
         },
     );
+}
+
+// ---- Ingestion status helpers ----
+const Phase = ingest_service.Phase;
+const RelayStatus = ingest_service.RelayStatus;
+const Status = ingest_service.Status;
+
+fn phaseToStr(p: Phase) []const u8 {
+    return switch (p) {
+        .initial => "initial",
+        .contacts => "contacts",
+        .posts_backfill => "posts_backfill",
+        .live => "live",
+        .finished => "finished",
+        .failed => "failed",
+    };
+}
+
+fn renderStatusJson(allocator: std.mem.Allocator, st: Status) ![]u8 {
+    var list = std.ArrayList(u8).empty;
+    errdefer list.deinit(allocator);
+    var w = list.writer(allocator);
+    try w.writeAll("{");
+    try w.print("\"phase\":\"{s}\",", .{phaseToStr(st.phase)});
+    try w.print("\"events_ingested\":{d},", .{st.events_ingested});
+    try w.print("\"latest_created_at\":{d},", .{st.latest_created_at});
+    if (st.first_post_ms) |v| {
+        try w.print("\"first_post_ms\":{d},", .{v});
+    } else {
+        try w.writeAll("\"first_post_ms\":null,");
+    }
+    if (st.last_error) |e| {
+        try w.writeAll("\"last_error\":");
+        try jsonEscapeString(&w, e);
+        try w.writeAll(",");
+    } else {
+        try w.writeAll("\"last_error\":null,");
+    }
+    try w.writeAll("\"relays\":[");
+    var i: usize = 0;
+    while (i < st.relays.len) : (i += 1) {
+        const rs = st.relays[i];
+        if (i != 0) try w.writeAll(",");
+        try w.writeAll("{");
+        try w.writeAll("\"url\":");
+        try jsonEscapeString(&w, rs.url);
+        try w.print(",\"eose\":{s},", .{if (rs.eose) "true" else "false"});
+        if (rs.err) |err_str| {
+            try w.writeAll("\"error\":");
+            try jsonEscapeString(&w, err_str);
+        } else {
+            try w.writeAll("\"error\":null");
+        }
+        try w.writeAll("}");
+    }
+    try w.writeAll("]}");
+    return try list.toOwnedSlice(allocator);
+}
+
+fn jsonEscapeString(writer: anytype, s: []const u8) !void {
+    try writer.writeByte('"');
+    for (s) |ch| switch (ch) {
+        '"' => try writer.writeAll("\\\""),
+        '\\' => try writer.writeAll("\\\\"),
+        '\n' => try writer.writeAll("\\n"),
+        '\r' => try writer.writeAll("\\r"),
+        '\t' => try writer.writeAll("\\t"),
+        else => try writer.writeByte(ch),
+    };
+    try writer.writeByte('"');
+}
+
+fn writeStatusBanner(writer: anytype, npub_value: []const u8) !void {
+    try writer.writeAll("<div class=\"status\"><div class=\"spinner\" id=\"spin\"></div><div id=\"status-text\">Checking status…</div></div>\n");
+    try writer.writeAll("<script>\n");
+    try writer.writeAll("(function(){\n");
+    try writer.writeAll("  const npub = '");
+    try htmlEscape(writer, npub_value);
+    try writer.writeAll("';\n");
+    try writer.writeAll("  let lastCount = 0;\n");
+    try writer.writeAll("  async function poll(){\n");
+    try writer.writeAll("    try {\n");
+    try writer.writeAll("      const r = await fetch('/status?npub=' + encodeURIComponent(npub));\n");
+    try writer.writeAll("      if(!r.ok) throw new Error('http '+r.status);\n");
+    try writer.writeAll("      const j = await r.json();\n");
+    try writer.writeAll("      document.getElementById('status-text').textContent = 'phase: ' + j.phase + ' — events: ' + j.events_ingested;\n");
+    try writer.writeAll("      if (j.events_ingested > lastCount) { lastCount = j.events_ingested; window.location.reload(); return; }\n");
+    try writer.writeAll("      if (j.phase === 'finished') { document.getElementById('spin').style.display='none'; }\n");
+    try writer.writeAll("    } catch(e) { document.getElementById('status-text').textContent = 'status unavailable'; }\n");
+    try writer.writeAll("    setTimeout(poll, 600);\n");
+    try writer.writeAll("  }\n");
+    try writer.writeAll("  const start = document.getElementById('start-link'); if (start) { start.addEventListener('click', function(ev){ ev.preventDefault(); window.location.href = '/start?npub=' + encodeURIComponent(npub); }); }\n");
+    try writer.writeAll("  poll();\n");
+    try writer.writeAll("})();\n");
+    try writer.writeAll("</script>\n");
+}
+
+fn extractContent(allocator: std.mem.Allocator, payload: []const u8) ?[]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), payload, .{}) catch return null;
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return null;
+    const object = root.object;
+    const content = object.get("content") orelse return null;
+    if (content != .string) return null;
+    return content.string;
 }
