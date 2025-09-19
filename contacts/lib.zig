@@ -24,7 +24,6 @@ const LmdbError = error{
     Unexpected,
 };
 
-
 pub const ContactList = struct {
     allocator: Allocator,
     event_id: ContactKey = zero_key,
@@ -43,7 +42,6 @@ pub const ContactList = struct {
         return false;
     }
 };
-;
 
 pub const Options = struct {
     path: []const u8,
@@ -239,7 +237,6 @@ fn mapError(rc: c_int) LmdbError {
         else => error.Unexpected,
     };
 }
-
 
 pub const ContactEvent = struct {
     allocator: Allocator,

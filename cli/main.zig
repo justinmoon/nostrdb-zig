@@ -235,8 +235,7 @@ fn printTimeline(
     defer snapshot.deinit();
 
     if (snapshot.entries.len == 0) {
-        try writer.writeAll("No events found.
-");
+        try writer.writeAll("No events found.\n");
         return;
     }
 
@@ -244,8 +243,7 @@ fn printTimeline(
     const display_count = @min(@as(usize, limit), total);
 
     var header_buf: [128]u8 = undefined;
-    const header = try std.fmt.bufPrint(&header_buf, "Timeline ({d} events, showing {d})
-", .{ total, display_count });
+    const header = try std.fmt.bufPrint(&header_buf, "Timeline ({d} events, showing {d})\n", .{ total, display_count });
     try writer.writeAll(header);
 
     var event_buf: [64]u8 = undefined;
@@ -267,11 +265,9 @@ fn printTimeline(
             try writeContentPreview(writer, allocator, record.payload);
         }
 
-        try writer.writeAll("
-");
+        try writer.writeAll("\n");
     }
 }
-
 
 fn encodeHexLower(buf: []u8, bytes: []const u8) []const u8 {
     const charset = "0123456789abcdef";

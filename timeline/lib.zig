@@ -1,4 +1,3 @@
-
 const std = @import("std");
 const clmdb = @cImport({
     @cInclude("lmdb.h");
@@ -227,7 +226,6 @@ pub fn getMeta(store: *Store, npub: PubKey) StoreError!TimelineMeta {
         else => return err,
     };
 }
-
 
 pub fn loadTimeline(store: *Store, npub: PubKey) StoreError!TimelineSnapshot {
     var txn_ptr: ?*clmdb.MDB_txn = null;
