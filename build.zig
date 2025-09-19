@@ -14,12 +14,12 @@ pub fn build(b: *std.Build) void {
 
     // Build the C library sources from nostrdb at the pinned commit
     const lib = b.addLibrary(.{ .name = "nostrdb_c", .linkage = .static, .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
+    // Ensure libc headers and symbols are available when compiling C sources
+    lib.linkLibC();
 
     // Common include paths for all C code
-    // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        lib.addIncludePath(b.path("src/override")); // Our config.h override comes first
-    }
+    // Always add our override directory first to provide a fixed config.h
+    lib.addIncludePath(b.path("src/override"));
     lib.addIncludePath(b.path("nostrdb/src"));
     lib.addIncludePath(b.path("nostrdb/src/bindings/c")); // For profile_reader.h
     lib.addIncludePath(b.path("nostrdb/ccan"));
@@ -109,6 +109,8 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_ECDH", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
+    // Ensure FlatCC uses safe loads on all platforms under Zig debug/runtime
+    lib.root_module.addCMacro("PORTABLE_UNALIGNED_ACCESS", "0");
 
     // Debug flags similar to build.rs
     switch (optimize) {
@@ -142,6 +144,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    c_module.addIncludePath(b.path("src/override"));
     c_module.addIncludePath(b.path("nostrdb/src"));
     c_module.addIncludePath(b.path("nostrdb/ccan"));
     c_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -156,9 +159,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        ndb_module.addIncludePath(b.path("src/override"));
-    }
+    ndb_module.addIncludePath(b.path("src/override"));
     ndb_module.addIncludePath(b.path("nostrdb/src"));
     ndb_module.addIncludePath(b.path("nostrdb/src/bindings/c"));
     ndb_module.addIncludePath(b.path("nostrdb/ccan"));
@@ -212,6 +213,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    megalith.linkLibC();
     megalith.root_module.addImport("proto", proto_module);
     megalith.root_module.addImport("net", net_module);
     megalith.root_module.addImport("contacts", contacts_module);
@@ -236,11 +238,10 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    ssr_demo.linkLibC();
     ssr_demo.root_module.addImport("ndb", ndb_module);
     ssr_demo.root_module.addImport("proto", proto_module);
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        ssr_demo.root_module.addIncludePath(b.path("src/override"));
-    }
+    ssr_demo.root_module.addIncludePath(b.path("src/override"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/src"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/ccan"));
     ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -257,12 +258,10 @@ pub fn build(b: *std.Build) void {
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
+    tests.linkLibC();
 
     // Ensure @cImport("nostrdb.h") resolves for tests
-    // On ARM64, add our override directory first to provide a fixed config.h
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        tests.root_module.addIncludePath(b.path("src/override"));
-    }
+    tests.root_module.addIncludePath(b.path("src/override"));
     tests.root_module.addIncludePath(b.path("nostrdb/src"));
     tests.root_module.addIncludePath(b.path("nostrdb/ccan"));
     tests.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
@@ -318,6 +317,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("cli_tests", cli_tests_module);
+
+    const smoke_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/smoke_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("smoke_tests", smoke_tests_module);
     if (target.result.os.tag == .macos) {
         configureAppleSdk(b, tests);
         tests.linkFramework("Security");

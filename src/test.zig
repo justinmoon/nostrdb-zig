@@ -8,6 +8,7 @@ test {
     _ = @import("contacts_tests");
     _ = @import("timeline_tests");
     _ = @import("ingest_tests");
+    _ = @import("smoke_tests");
     _ = @import("cli_tests");
     _ = @import("test_phase5.zig");
 }

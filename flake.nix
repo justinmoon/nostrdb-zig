@@ -34,107 +34,24 @@
           clang
         ];
         
-        # CI script that runs all tests and checks
-        ciScript = pkgs.writeShellScriptBin "ci" ''
+        # small wrapper to run scripts/ci.sh with needed tools in PATH
+        ciWrapper = pkgs.writeShellScriptBin "ci" ''
           set -euo pipefail
-          
-          echo "=== NostrDB Zig CI ==="
-          echo ""
-          
-          # Ensure we're in the project directory
-          if [ ! -f "build.zig" ]; then
-            echo "Error: build.zig not found. Please run from project root."
-            exit 1
-          fi
-          
-          echo "→ Checking Zig version..."
-          ${zigPkg}/bin/zig version
-          echo ""
-          
-          # Set up C environment for Zig
+          export PATH="${zigPkg}/bin:${pkgs.git}/bin:${pkgs.pkg-config}/bin:${pkgs.stdenv.cc}/bin:${pkgs.stdenv.cc.bintools.bintools}/bin:$PATH"
           export CC="${pkgs.stdenv.cc}/bin/cc"
           export AR="${pkgs.stdenv.cc.bintools.bintools}/bin/ar"
-          
-          # On Linux, we need to help Zig find the libc
-          # Note: This section is only evaluated at runtime on Linux, not during Nix evaluation
-          if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            # Use Zig's ability to use system libc  
-            export ZIG_LIBC_TXT=$(mktemp)
-            cat > $ZIG_LIBC_TXT << 'LIBC_EOF'
-          include_dir=/usr/include
-          sys_include_dir=/usr/include  
-          crt_dir=/usr/lib
-          msvc_lib_dir=
-          kernel32_lib_dir=
-          gcc_dir=
-          LIBC_EOF
-            echo "Created libc config at $ZIG_LIBC_TXT"
-          fi
-          echo ""
-          
-          echo "→ Formatting check..."
-          echo "Checking if code is properly formatted..."
-          if ! ${zigPkg}/bin/zig fmt --check . 2>/dev/null; then
-            echo "✗ Code formatting issues found!"
-            echo "  Run 'zig fmt .' to fix formatting"
-            exit 1
-          fi
-          echo "✓ Code formatting OK"
-          echo ""
-          
-          echo "→ Ensuring nostrdb submodule is initialized..."
-          git submodule update --init --recursive
-          echo "✓ nostrdb submodule ready"
-          echo ""
-          
-          echo "→ Build and test steps temporarily disabled"
-          echo "ℹ️  The build currently fails in Nix due to C header path issues"
-          echo "ℹ️  This is a known issue with Zig + Nix when compiling C dependencies"
-          echo "ℹ️  For now, we're only running the formatting check"
-          echo ""
-          
-          # Check for common issues
-          echo "→ Running additional checks..."
-          
-          # Check for TODO/FIXME comments (informational only)
-          TODO_COUNT=$(grep -r "TODO\|FIXME" --include="*.zig" . 2>/dev/null | wc -l || echo "0")
-          if [ "$TODO_COUNT" -gt 0 ]; then
-            echo "ℹ Found $TODO_COUNT TODO/FIXME comments"
-          fi
-          
-          # Check for unreachable code patterns
-          UNREACHABLE_COUNT=$(grep -r "unreachable" --include="*.zig" . 2>/dev/null | wc -l || echo "0")
-          if [ "$UNREACHABLE_COUNT" -gt 0 ]; then
-            echo "ℹ Found $UNREACHABLE_COUNT uses of 'unreachable'"
-          fi
-          
-          echo ""
-          echo "=== ✓ CI passed successfully! ==="
+          exec ${pkgs.bash}/bin/bash ${./scripts/ci.sh}
         '';
 
       in
       {
         # Development shell with all dependencies
         devShells.default = pkgs.mkShell {
-          buildInputs = devDeps ++ [
-            ciScript
-          ];
-          
-          shellHook = ''
-            echo "NostrDB Zig development environment"
-            echo "Available commands:"
-            echo "  zig build         - Build the project"
-            echo "  zig build test    - Run tests"
-            echo "  zig build megalith - Build the megalith CLI"
-            echo "  zig fmt .         - Format code"
-            echo "  ci               - Run full CI suite"
-            echo ""
-            echo "Zig version: $(${zigPkg}/bin/zig version)"
-          '';
+          buildInputs = devDeps;
         };
         
-        # CI output that can be run with `nix run .#ci`
-        packages.ci = ciScript;
+        # CI app that can be run with `nix run .#ci`
+        packages.ci = ciWrapper;
         
         # Default package (builds the project)
         packages.default = pkgs.stdenv.mkDerivation {
@@ -179,9 +96,6 @@
         };
         
         # Convenience app for running CI
-        apps.ci = {
-          type = "app";
-          program = "${ciScript}/bin/ci";
-        };
+        apps.ci = { type = "app"; program = "${ciWrapper}/bin/ci"; };
       });
 }
