@@ -319,7 +319,7 @@ fn renderHome(allocator: std.mem.Allocator, npub_value: ?[]const u8, message: ?[
 fn renderTimelinePage(
     allocator: std.mem.Allocator,
     npub_value: []const u8,
-    pubkey: [32]u8,
+    _pubkey: [32]u8,
     notes: []ndb.QueryResult,
 ) ![]u8 {
     var list = std.ArrayList(u8).empty;
