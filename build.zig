@@ -109,6 +109,8 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("ENABLE_MODULE_ECDH", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_SCHNORRSIG", "1");
     lib.root_module.addCMacro("ENABLE_MODULE_EXTRAKEYS", "1");
+    // Ensure FlatCC uses safe loads on all platforms under Zig debug/runtime
+    lib.root_module.addCMacro("FLATCC_ALLOW_UNALIGNED_ACCESS", "0");
 
     // Debug flags similar to build.rs
     switch (optimize) {
