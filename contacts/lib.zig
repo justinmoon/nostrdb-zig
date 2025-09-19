@@ -3,6 +3,9 @@ const ascii = std.ascii;
 const proto = @import("proto");
 const net = @import("net");
 const ndb = @import("ndb");
+const clmdb = @cImport({
+    @cInclude("lmdb.h");
+});
 
 const log = std.log.scoped(.contacts);
 
@@ -12,73 +15,228 @@ pub const ContactKey = [32]u8;
 
 const zero_key = [_]u8{0} ** 32;
 
+const LmdbError = error{
+    MapFull,
+    NotFound,
+    KeyExist,
+    TxnFull,
+    Corrupt,
+    Unexpected,
+};
+
 pub const ContactList = struct {
+    allocator: Allocator,
     event_id: ContactKey = zero_key,
     created_at: u64 = 0,
-    follows: std.AutoHashMap(ContactKey, void),
-
-    pub fn init(allocator: Allocator) ContactList {
-        return .{ .follows = std.AutoHashMap(ContactKey, void).init(allocator) };
-    }
+    follows: []ContactKey = &[_]ContactKey{},
 
     pub fn deinit(self: *ContactList) void {
-        self.follows.deinit();
+        self.allocator.free(self.follows);
+        self.* = undefined;
     }
+
+    pub fn contains(self: ContactList, key: ContactKey) bool {
+        for (self.follows) |follow| {
+            if (std.mem.eql(u8, follow[0..], key[0..])) return true;
+        }
+        return false;
+    }
+};
+
+pub const Options = struct {
+    path: []const u8,
+    map_size: usize = 32 * 1024 * 1024,
 };
 
 pub const Store = struct {
     allocator: Allocator,
-    lists: std.AutoHashMap(ContactKey, ContactList),
+    env: *clmdb.MDB_env,
+    lists_dbi: clmdb.MDB_dbi,
 
-    pub fn init(allocator: Allocator) Store {
-        return .{
+    pub fn init(allocator: Allocator, options: Options) !Store {
+        try ensureDirectory(options.path);
+
+        var env_ptr: ?*clmdb.MDB_env = null;
+        try check(clmdb.mdb_env_create(&env_ptr));
+        errdefer clmdb.mdb_env_close(env_ptr.?);
+
+        try check(clmdb.mdb_env_set_maxdbs(env_ptr.?, 4));
+        try check(clmdb.mdb_env_set_mapsize(env_ptr.?, options.map_size));
+
+        const path_z = try allocator.dupeZ(u8, options.path);
+        defer allocator.free(path_z);
+
+        try check(clmdb.mdb_env_open(env_ptr.?, @ptrCast(path_z.ptr), 0, 0o664));
+
+        var txn_ptr: ?*clmdb.MDB_txn = null;
+        try check(clmdb.mdb_txn_begin(env_ptr.?, null, 0, &txn_ptr));
+        errdefer clmdb.mdb_txn_abort(txn_ptr.?);
+
+        const lists_name = try std.cstr.addNullByte(allocator, "contact_lists");
+        defer allocator.free(lists_name);
+        var lists_dbi: clmdb.MDB_dbi = undefined;
+        try check(clmdb.mdb_dbi_open(txn_ptr.?, @ptrCast(lists_name.ptr), clmdb.MDB_CREATE, &lists_dbi));
+
+        try check(clmdb.mdb_txn_commit(txn_ptr.?));
+
+        return Store{
             .allocator = allocator,
-            .lists = std.AutoHashMap(ContactKey, ContactList).init(allocator),
+            .env = env_ptr.?,
+            .lists_dbi = lists_dbi,
         };
     }
 
     pub fn deinit(self: *Store) void {
-        var it = self.lists.iterator();
-        while (it.next()) |entry| {
-            var list = entry.value_ptr.*;
-            list.deinit();
-        }
-        self.lists.deinit();
+        clmdb.mdb_env_close(self.env);
+        self.* = undefined;
     }
 
-    pub fn get(self: *Store, npub: ContactKey) ?*ContactList {
-        return self.lists.getPtr(npub);
-    }
+    pub fn get(self: *Store, npub: ContactKey) StoreError!?ContactList {
+        var txn_ptr: ?*clmdb.MDB_txn = null;
+        try check(clmdb.mdb_txn_begin(self.env, null, clmdb.MDB_RDONLY, &txn_ptr));
+        defer clmdb.mdb_txn_abort(txn_ptr.?);
 
-    pub fn ensure(self: *Store, npub: ContactKey) !*ContactList {
-        if (self.lists.getPtr(npub)) |existing| return existing;
-        const result = try self.lists.getOrPut(npub);
-        if (!result.found_existing) {
-            result.value_ptr.* = ContactList.init(self.allocator);
+        var key = mdbVal(npub[0..]);
+        var value: clmdb.MDB_val = undefined;
+        const rc = clmdb.mdb_get(txn_ptr.?, self.lists_dbi, &key, &value);
+        if (rc == clmdb.MDB_NOTFOUND) {
+            return null;
         }
-        return result.value_ptr;
+        try check(rc);
+
+        return parseStoredList(self, value);
     }
 
     pub fn applyEvent(self: *Store, event: *ContactEvent) StoreError!void {
         defer event.deinit();
 
-        var list = try self.ensure(event.author);
+        var txn_ptr: ?*clmdb.MDB_txn = null;
+        try check(clmdb.mdb_txn_begin(self.env, null, 0, &txn_ptr));
+        errdefer clmdb.mdb_txn_abort(txn_ptr.?);
 
-        if (list.created_at > event.created_at) return;
-        if (list.created_at == event.created_at) {
-            if (std.mem.lessThan(u8, event.event_id[0..], list.event_id[0..])) {
+        var committed = false;
+        defer if (!committed) clmdb.mdb_txn_abort(txn_ptr.?);
+
+        var key = mdbVal(event.author[0..]);
+        var existing_val: clmdb.MDB_val = undefined;
+        const rc = clmdb.mdb_get(txn_ptr.?, self.lists_dbi, &key, &existing_val);
+        if (rc != clmdb.MDB_NOTFOUND) {
+            try check(rc);
+            const existing = try parseStoredMeta(existing_val);
+            if (existing.created_at > event.created_at) {
+                return;
+            }
+            if (existing.created_at == event.created_at and std.mem.lessThan(u8, event.event_id[0..], existing.event_id[0..])) {
                 return;
             }
         }
 
-        list.follows.clearRetainingCapacity();
+        const follow_count = event.follows.len;
+        if (follow_count > std.math.maxInt(u32)) return error.TooManyFollows;
+        const stored_count = @intCast(u32, follow_count);
+        const total_len = 8 + 32 + 4 + follow_count * ContactKey.len;
+        var buf = try self.allocator.alloc(u8, total_len);
+        defer self.allocator.free(buf);
+
+        std.mem.writeIntLittle(u64, buf[0..8], event.created_at);
+        @memcpy(buf[8..40], event.event_id[0..]);
+        std.mem.writeIntLittle(u32, buf[40..44], stored_count);
+
+        var offset: usize = 44;
         for (event.follows) |follow| {
-            try list.follows.put(follow, {});
+            @memcpy(buf[offset .. offset + ContactKey.len], follow[0..]);
+            offset += ContactKey.len;
         }
-        list.created_at = event.created_at;
-        list.event_id = event.event_id;
+
+        var value = mdbVal(buf);
+        try check(clmdb.mdb_put(txn_ptr.?, self.lists_dbi, &key, &value, 0));
+
+        try check(clmdb.mdb_txn_commit(txn_ptr.?));
+        committed = true;
     }
 };
+
+const StoredMeta = struct {
+    created_at: u64,
+    event_id: ContactKey,
+};
+
+fn parseStoredMeta(val: clmdb.MDB_val) StoreError!StoredMeta {
+    const bytes = mdbSliceConst(val);
+    if (bytes.len < 40) return error.Corrupt;
+    var event_id: ContactKey = undefined;
+    @memcpy(event_id[0..], bytes[8..40]);
+    return StoredMeta{
+        .created_at = std.mem.readIntLittle(u64, bytes[0..8]),
+        .event_id = event_id,
+    };
+}
+
+fn parseStoredList(self: *Store, val: clmdb.MDB_val) StoreError!ContactList {
+    const bytes = mdbSliceConst(val);
+    if (bytes.len < 44) return error.Corrupt;
+    const created_at = std.mem.readIntLittle(u64, bytes[0..8]);
+    var event_id: ContactKey = undefined;
+    @memcpy(event_id[0..], bytes[8..40]);
+    const count = std.mem.readIntLittle(u32, bytes[40..44]);
+    const required = 44 + @as(usize, count) * ContactKey.len;
+    if (bytes.len != required) return error.Corrupt;
+
+    const follows_bytes = bytes[44..];
+    const count_usize = @intCast(usize, count);
+    const follows = try self.allocator.alloc(ContactKey, count_usize);
+    errdefer self.allocator.free(follows);
+
+    var offset: usize = 0;
+    var idx: usize = 0;
+    while (idx < count_usize) : (idx += 1) {
+        @memcpy(follows[idx][0..], follows_bytes[offset .. offset + ContactKey.len]);
+        offset += ContactKey.len;
+    }
+
+    return ContactList{
+        .allocator = self.allocator,
+        .event_id = event_id,
+        .created_at = created_at,
+        .follows = follows,
+    };
+}
+
+fn ensureDirectory(path: []const u8) !void {
+    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+}
+
+fn mdbSliceConst(val: clmdb.MDB_val) []const u8 {
+    const ptr: [*]const u8 = @ptrCast(val.mv_data);
+    return ptr[0..val.mv_size];
+}
+
+fn mdbVal(bytes: []const u8) clmdb.MDB_val {
+    return .{
+        .mv_size = bytes.len,
+        .mv_data = @ptrCast(@constCast(bytes.ptr)),
+    };
+}
+
+fn check(rc: c_int) LmdbError!void {
+    if (rc != 0) {
+        return mapError(rc);
+    }
+}
+
+fn mapError(rc: c_int) LmdbError {
+    return switch (rc) {
+        clmdb.MDB_NOTFOUND => error.NotFound,
+        clmdb.MDB_MAP_FULL => error.MapFull,
+        clmdb.MDB_KEYEXIST => error.KeyExist,
+        clmdb.MDB_TXN_FULL => error.TxnFull,
+        clmdb.MDB_CORRUPTED, clmdb.MDB_PAGE_NOTFOUND => error.Corrupt,
+        else => error.Unexpected,
+    };
+}
 
 pub const ContactEvent = struct {
     allocator: Allocator,
@@ -193,14 +351,14 @@ pub const Parser = struct {
     }
 };
 
-pub const StoreError = Allocator.Error;
+pub const StoreError = Allocator.Error || LmdbError || error{TooManyFollows};
 
 pub const Fetcher = struct {
     allocator: Allocator,
     store: *Store,
     parser: Parser,
 
-    pub const FetchError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || error{CompletionTimeout};
+    pub const FetchError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || StoreError || error{CompletionTimeout};
 
     pub fn init(allocator: Allocator, store: *Store) Fetcher {
         return .{

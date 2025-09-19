@@ -19,6 +19,38 @@ fn hexKey(hex: []const u8) [32]u8 {
     return out;
 }
 
+const StoreContext = struct {
+    allocator: std.mem.Allocator,
+    tmp_dir: std.testing.TmpDir,
+    path: []u8,
+    store: contacts.Store,
+
+    fn init(allocator: std.mem.Allocator) !StoreContext {
+        var tmp_dir = try std.testing.tmpDir(.{});
+        errdefer tmp_dir.cleanup();
+
+        try tmp_dir.dir.makePath("contacts");
+        const path = try tmp_dir.dir.realpathAlloc(allocator, "contacts");
+        errdefer allocator.free(path);
+
+        var store = try contacts.Store.init(allocator, .{ .path = path });
+        errdefer store.deinit();
+
+        return StoreContext{
+            .allocator = allocator,
+            .tmp_dir = tmp_dir,
+            .path = path,
+            .store = store,
+        };
+    }
+
+    fn deinit(self: *StoreContext) void {
+        self.store.deinit();
+        self.allocator.free(self.path);
+        self.tmp_dir.cleanup();
+    }
+};
+
 test "parser extracts follows from p tags" {
     const allocator = std.testing.allocator;
     var parser = contacts.Parser.init(allocator);
@@ -54,8 +86,8 @@ test "parser extracts follows from p tags" {
 
 test "store keeps latest created_at" {
     const allocator = std.testing.allocator;
-    var store = contacts.Store.init(allocator);
-    defer store.deinit();
+    var ctx = try StoreContext.init(allocator);
+    defer ctx.deinit();
 
     var parser = contacts.Parser.init(allocator);
     defer parser.deinit();
@@ -69,7 +101,7 @@ test "store keeps latest created_at" {
         "\"content\":\"a\"}";
 
     var old_event = try parser.parse(old_event_json);
-    try store.applyEvent(&old_event);
+    try ctx.store.applyEvent(&old_event);
 
     const new_event_json =
         "{\"id\":\"2222222222222222222222222222222222222222222222222222222222222222\"," ++
@@ -80,21 +112,25 @@ test "store keeps latest created_at" {
         "\"content\":\"b\"}";
 
     var new_event = try parser.parse(new_event_json);
-    try store.applyEvent(&new_event);
+    try ctx.store.applyEvent(&new_event);
 
     const key = hexKey("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-    const list = store.get(key) orelse return error.TestExpectedResult;
-    try std.testing.expectEqual(@as(u64, 20), list.created_at);
+    const list_opt = try ctx.store.get(key);
+    const list = list_opt orelse return error.TestExpectedResult;
+    var owned = list;
+    defer owned.deinit();
+
+    try std.testing.expectEqual(@as(u64, 20), owned.created_at);
     const expected_event = hexKey("2222222222222222222222222222222222222222222222222222222222222222");
-    try std.testing.expectEqualSlices(u8, &expected_event, &list.event_id);
-    try std.testing.expectEqual(@as(usize, 1), list.follows.count());
-    try std.testing.expect(list.follows.contains(hexKey("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")));
+    try std.testing.expectEqualSlices(u8, &expected_event, &owned.event_id);
+    try std.testing.expectEqual(@as(usize, 1), owned.follows.len);
+    try std.testing.expect(owned.contains(hexKey("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")));
 }
 
 test "store keeps lexicographically greater event id on tie" {
     const allocator = std.testing.allocator;
-    var store = contacts.Store.init(allocator);
-    defer store.deinit();
+    var ctx = try StoreContext.init(allocator);
+    defer ctx.deinit();
 
     var parser = contacts.Parser.init(allocator);
     defer parser.deinit();
@@ -107,7 +143,7 @@ test "store keeps lexicographically greater event id on tie" {
         "\"tags\":[],\"content\":\"c\"}";
 
     var first_event = try parser.parse(first_json);
-    try store.applyEvent(&first_event);
+    try ctx.store.applyEvent(&first_event);
 
     const second_json =
         "{\"id\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"," ++
@@ -117,12 +153,16 @@ test "store keeps lexicographically greater event id on tie" {
         "\"tags\":[],\"content\":\"d\"}";
 
     var second_event = try parser.parse(second_json);
-    try store.applyEvent(&second_event);
+    try ctx.store.applyEvent(&second_event);
 
     const key = hexKey("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    const list = store.get(key) orelse return error.TestExpectedResult;
+    const list_opt = try ctx.store.get(key);
+    const list = list_opt orelse return error.TestExpectedResult;
+    var owned = list;
+    defer owned.deinit();
+
     const expected_final = hexKey("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-    try std.testing.expectEqualSlices(u8, &expected_final, &list.event_id);
+    try std.testing.expectEqualSlices(u8, &expected_final, &owned.event_id);
 }
 
 test "fetcher picks latest contact list" {
@@ -138,7 +178,11 @@ test "fetcher picks latest contact list" {
     var db = try ndb.Ndb.init(allocator, db_path, &cfg);
     defer db.deinit();
 
-    var store = contacts.Store.init(allocator);
+    try tmp_dir.dir.makePath("contacts_store");
+    const store_path = try tmp_dir.dir.realpathAlloc(allocator, "contacts_store");
+    defer allocator.free(store_path);
+
+    var store = try contacts.Store.init(allocator, .{ .path = store_path });
     defer store.deinit();
 
     var fetcher = contacts.Fetcher.init(allocator, &store);
@@ -186,10 +230,14 @@ test "fetcher picks latest contact list" {
 
     try fetcher.fetchContacts(npub, &.{relay_url}, &db);
 
-    const list = store.get(npub) orelse return error.TestExpectedResult;
-    try std.testing.expectEqual(@as(u64, 200), list.created_at);
+    const list_opt = try store.get(npub);
+    const list = list_opt orelse return error.TestExpectedResult;
+    var owned = list;
+    defer owned.deinit();
+
+    try std.testing.expectEqual(@as(u64, 200), owned.created_at);
     const expected_event = hexKey("0202020202020202020202020202020202020202020202020202020202020202");
-    try std.testing.expectEqualSlices(u8, &expected_event, &list.event_id);
-    try std.testing.expect(list.follows.contains(follow_new));
-    try std.testing.expect(!list.follows.contains(follow_old));
+    try std.testing.expectEqualSlices(u8, &expected_event, &owned.event_id);
+    try std.testing.expect(owned.contains(follow_new));
+    try std.testing.expect(!owned.contains(follow_old));
 }

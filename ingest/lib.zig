@@ -16,7 +16,7 @@ pub const EventMeta = struct {
     kind: u64,
 };
 
-pub const PipelineError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || proto.FilterError || timeline.InsertError || error{
+pub const PipelineError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || proto.FilterError || contacts.StoreError || timeline.InsertError || timeline.StoreError || error{
     NoFollowSet,
     CompletionTimeout,
     EventParseFailed,
@@ -158,7 +158,7 @@ pub const Pipeline = struct {
     fn onEose(self: *Pipeline, client: *ClientState, follow_lookup: *SelfFollowSet) PipelineError!void {
         switch (client.phase) {
             .initial => {
-                const since = timeline.latestCreatedAt(self.timeline_store, self.npub);
+                const since = try timeline.latestCreatedAt(self.timeline_store, self.npub);
                 const filters = try self.buildFilters(follow_lookup.authors, since);
                 defer self.freeFilters(filters);
 
@@ -178,14 +178,15 @@ pub const Pipeline = struct {
         }
     }
 
-    fn captureFollows(self: *Pipeline) Allocator.Error![]timeline.PubKey {
+    fn captureFollows(self: *Pipeline) (Allocator.Error || contacts.StoreError)![]timeline.PubKey {
         var array = std.array_list.Managed(timeline.PubKey).init(self.allocator);
         errdefer array.deinit();
 
-        if (self.contacts_store.get(self.npub)) |contact_list| {
-            var it = contact_list.follows.iterator();
-            while (it.next()) |entry| {
-                try array.append(entry.key_ptr.*);
+        if (try self.contacts_store.get(self.npub)) |list| {
+            var owned = list;
+            defer owned.deinit();
+            for (owned.follows) |follow| {
+                try array.append(follow);
             }
         }
 
@@ -212,10 +213,12 @@ pub const Pipeline = struct {
     }
 
     fn initialSince(self: *Pipeline) ?u64 {
-        if (self.timeline_store.getTimeline(self.npub)) |timeline_ref| {
-            if (timeline_ref.entries.items.len >= @as(usize, self.limit)) {
-                return timeline_ref.meta.latest_created_at;
-            }
+        const meta = timeline.getMeta(self.timeline_store, self.npub) catch |err| {
+            log.warn("failed to load timeline meta: {}", .{err});
+            return null;
+        };
+        if (meta.count >= @as(usize, self.limit)) {
+            return meta.latest_created_at;
         }
         return null;
     }

@@ -47,19 +47,38 @@ test "pipeline ingests followed events and ignores others" {
     var db = try ndb.Ndb.init(allocator, db_path, &cfg);
     defer db.deinit();
 
-    var contacts_store = contacts.Store.init(allocator);
+    try tmp_dir.dir.makePath("contacts");
+    const contacts_path = try tmp_dir.dir.realpathAlloc(allocator, "contacts");
+    defer allocator.free(contacts_path);
+
+    var contacts_store = try contacts.Store.init(allocator, .{ .path = contacts_path });
     defer contacts_store.deinit();
 
-    var timeline_store = timeline.Store.init(allocator, 32);
+    try tmp_dir.dir.makePath("timeline");
+    const timeline_path = try tmp_dir.dir.realpathAlloc(allocator, "timeline");
+    defer allocator.free(timeline_path);
+
+    var timeline_store = try timeline.Store.init(allocator, .{
+        .path = timeline_path,
+        .max_entries = 32,
+    });
     defer timeline_store.deinit();
 
     const npub = hexKey("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const follow1 = hexKey("3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d");
     const follow2 = hexKey("7216e1df98ff551e77a4c0ce2d886a48ef79319d281b507ca3bfdd8118ce74ad");
 
-    var list = try contacts_store.ensure(npub);
-    try list.follows.put(follow1, {});
-    try list.follows.put(follow2, {});
+    var follows = try allocator.alloc(contacts.ContactKey, 2);
+    follows[0] = follow1;
+    follows[1] = follow2;
+    var contact_event = contacts.ContactEvent{
+        .allocator = allocator,
+        .author = npub,
+        .created_at = 1,
+        .event_id = hexKey("0101010101010101010101010101010101010101010101010101010101010101"),
+        .follows = follows,
+    };
+    try contacts_store.applyEvent(&contact_event);
 
     var pipeline = ingest.Pipeline.init(allocator, npub, 100, &contacts_store, &timeline_store, &db);
 
@@ -97,15 +116,20 @@ test "pipeline ingests followed events and ignores others" {
     try std.testing.expect(std.mem.indexOf(u8, request_log.entries.items[0], "\"since\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, request_log.entries.items[1], "\"since\"") != null);
 
-    const timeline_ref = timeline_store.getTimeline(npub) orelse return error.TestExpectedResult;
-    try std.testing.expectEqual(@as(usize, 2), timeline_ref.entries.items.len);
-    try std.testing.expectEqual(@as(u64, 1741372926), timeline_ref.meta.latest_created_at);
+    var snapshot = try timeline.loadTimeline(&timeline_store, npub);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 2), snapshot.entries.len);
+    try std.testing.expectEqual(@as(u64, 1741372926), snapshot.meta.latest_created_at);
 
     const latest_event_id = hexKey("c7c8cdc2a22179045483af34259e0f30016b1ab6ee6aa7c680c1ebe458279e25");
-    try std.testing.expectEqualSlices(u8, &latest_event_id, &timeline_ref.entries.items[0].event_id);
+    try std.testing.expectEqualSlices(u8, &latest_event_id, &snapshot.entries[0].event_id);
 
     const non_follow_event = hexKey("bc990203855b44130b25686fe70aeae45f4c98fb916f224800b3acba667a8b85");
-    try std.testing.expect(timeline_store.getEvent(non_follow_event) == null);
+    const record_opt = try timeline.getEvent(&timeline_store, non_follow_event);
+    if (record_opt) |record| {
+        defer record.deinit();
+        return error.TestUnexpectedResult;
+    }
 }
 
 test "pipeline initial request includes since when timeline full" {
@@ -121,16 +145,35 @@ test "pipeline initial request includes since when timeline full" {
     var db = try ndb.Ndb.init(allocator, db_path, &cfg);
     defer db.deinit();
 
-    var contacts_store = contacts.Store.init(allocator);
+    try tmp_dir.dir.makePath("contacts");
+    const contacts_path = try tmp_dir.dir.realpathAlloc(allocator, "contacts");
+    defer allocator.free(contacts_path);
+
+    var contacts_store = try contacts.Store.init(allocator, .{ .path = contacts_path });
     defer contacts_store.deinit();
 
-    var timeline_store = timeline.Store.init(allocator, 2);
+    try tmp_dir.dir.makePath("timeline");
+    const timeline_path = try tmp_dir.dir.realpathAlloc(allocator, "timeline");
+    defer allocator.free(timeline_path);
+
+    var timeline_store = try timeline.Store.init(allocator, .{
+        .path = timeline_path,
+        .max_entries = 2,
+    });
     defer timeline_store.deinit();
 
     const npub = hexKey("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
     const follow = hexKey("3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d");
-    var list = try contacts_store.ensure(npub);
-    try list.follows.put(follow, {});
+    var follows = try allocator.alloc(contacts.ContactKey, 1);
+    follows[0] = follow;
+    var contact_event = contacts.ContactEvent{
+        .allocator = allocator,
+        .author = npub,
+        .created_at = 1,
+        .event_id = hexKey("0202020202020202020202020202020202020202020202020202020202020202"),
+        .follows = follows,
+    };
+    try contacts_store.applyEvent(&contact_event);
 
     const author = follow;
     const payload = "{\"kind\":1}";
@@ -176,17 +219,36 @@ test "invalid signature is skipped" {
     var db = try ndb.Ndb.init(allocator, db_path, &cfg);
     defer db.deinit();
 
-    var contacts_store = contacts.Store.init(allocator);
+    try tmp_dir.dir.makePath("contacts");
+    const contacts_path = try tmp_dir.dir.realpathAlloc(allocator, "contacts");
+    defer allocator.free(contacts_path);
+
+    var contacts_store = try contacts.Store.init(allocator, .{ .path = contacts_path });
     defer contacts_store.deinit();
 
-    var timeline_store = timeline.Store.init(allocator, 32);
+    try tmp_dir.dir.makePath("timeline");
+    const timeline_path = try tmp_dir.dir.realpathAlloc(allocator, "timeline");
+    defer allocator.free(timeline_path);
+
+    var timeline_store = try timeline.Store.init(allocator, .{
+        .path = timeline_path,
+        .max_entries = 32,
+    });
     defer timeline_store.deinit();
 
     const npub = hexKey("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     const follow = hexKey("3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d");
 
-    var list = try contacts_store.ensure(npub);
-    try list.follows.put(follow, {});
+    var follows = try allocator.alloc(contacts.ContactKey, 1);
+    follows[0] = follow;
+    var contact_event = contacts.ContactEvent{
+        .allocator = allocator,
+        .author = npub,
+        .created_at = 1,
+        .event_id = hexKey("0303030303030303030303030303030303030303030303030303030303030303"),
+        .follows = follows,
+    };
+    try contacts_store.applyEvent(&contact_event);
 
     var pipeline = ingest.Pipeline.init(allocator, npub, 100, &contacts_store, &timeline_store, &db);
 
@@ -216,6 +278,7 @@ test "invalid signature is skipped" {
         else => return err,
     };
 
-    const timeline_ref = timeline_store.getTimeline(npub);
-    try std.testing.expect(timeline_ref == null or timeline_ref.?.entries.items.len == 0);
+    var snapshot = try timeline.loadTimeline(&timeline_store, npub);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 0), snapshot.entries.len);
 }
