@@ -146,6 +146,8 @@
           nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
 
           dontStrip = true;
+          doStrip = false;
+          stripAllList = [ ];
 
           configurePhase = ''
             echo "Skipping configure phase (Zig project)"
