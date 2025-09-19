@@ -8,9 +8,13 @@
       url = "github:mitchellh/zig-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nostrdb = {
+      url = "git+https://github.com/damus-io/nostrdb?submodules=1";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, zig }:
+  outputs = { self, nixpkgs, flake-utils, zig, nostrdb }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -133,55 +137,80 @@
           '';
         };
         
-        # CI output that can be run with `nix run .#ci`
-        packages.ci = ciScript;
-        
-        # Default package (builds the project)
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "nostrdb-zig";
-          version = "0.0.1";
+        # Packages
+        packages = {
+          # CI output that can be run with `nix run .#ci`
+          ci = ciScript;
           
-          src = ./.;
-          
-          nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
-          
-          # Skip configure phase since we're using Zig
-          configurePhase = ''
-            echo "Skipping configure phase (Zig project)"
-          '';
-          
-          buildPhase = ''
-            # Set up SSL certificates for git
-            export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-            export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-            
-            # Set up Zig cache directory 
-            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
-            mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
-            
-            # Ensure nostrdb submodule is available for the build
-            ${pkgs.git}/bin/git submodule update --init --recursive
-            
-            # Set up Zig paths
-            export PATH="${zigPkg}/bin:$PATH"
-            
-            # Build with release optimization
-            ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe --prefix $out
-            
-            # Also build megalith CLI  
-            ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe --prefix $out
-          '';
-          
-          installPhase = ''
-            # The zig build system handles installation with --prefix
-            echo "Installation completed by zig build"
-          '';
+          # Default package (builds the project)
+          default = pkgs.stdenv.mkDerivation {
+            pname = "nostrdb-zig";
+            version = "0.0.1";
+            src = ./.;
+            nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+            configurePhase = ''
+              echo "Skipping configure phase (Zig project)"
+            '';
+            buildPhase = ''
+              export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+              mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+              ${pkgs.git}/bin/git submodule update --init --recursive
+              export PATH="${zigPkg}/bin:$PATH"
+              ${zigPkg}/bin/zig build -Doptimize=ReleaseSafe --prefix $out
+              ${zigPkg}/bin/zig build megalith -Doptimize=ReleaseSafe --prefix $out
+            '';
+            installPhase = ''
+              echo "Installation completed by zig build"
+            '';
+          };
+        } // pkgs.lib.optionalAttrs (!pkgs.stdenv.isDarwin) {
+          ssr-demo = pkgs.stdenv.mkDerivation {
+            pname = "nostrdb-ssr-demo";
+            version = "0.0.1";
+            src = ./.;
+            nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+            configurePhase = ''
+              echo "Skipping configure phase (Zig project)"
+            '';
+            buildPhase = ''
+              export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+              mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+              export PATH="${zigPkg}/bin:$PATH"
+              export CPATH="${pkgs.stdenv.cc.libc.dev}/include"
+              export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib"
+              # Ensure nostrdb sources are available in the build tree
+              if [ ! -f "nostrdb/src/nostrdb.c" ]; then
+                echo "Copying nostrdb sources from flake input"
+                rm -rf nostrdb
+                cp -R ${nostrdb} nostrdb
+              fi
+              ${zigPkg}/bin/zig build ssr-demo -Doptimize=ReleaseSafe --prefix $out
+            '';
+            installPhase = ''
+              echo "Installation completed by zig build (ssr-demo)"
+            '';
+            meta.platforms = [ "x86_64-linux" "aarch64-linux" ];
+          };
         };
         
-        # Convenience app for running CI
-        apps.ci = {
-          type = "app";
-          program = "${ciScript}/bin/ci";
+        # Apps
+        apps = {
+          ci = { type = "app"; program = "${ciScript}/bin/ci"; };
+        } // pkgs.lib.optionalAttrs (!pkgs.stdenv.isDarwin) {
+          "ssr-demo" = { type = "app"; program = "${self.packages.${system}.ssr-demo}/bin/ssr-demo"; };
         };
-      });
+      }) // {
+        nixosModules = {
+          ssr-demo = import ./nix/modules/ssr-demo.nix;
+        };
+        nix = {
+          examples = {
+            caddy-ssr-demo = import ./nix/examples/caddy-ssr-demo.nix;
+          };
+        };
+      };
 }

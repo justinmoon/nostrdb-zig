@@ -250,10 +250,46 @@ pub fn build(b: *std.Build) void {
         configureAppleSdk(b, ssr_demo);
         ssr_demo.linkFramework("Security");
     }
+    if (target.result.os.tag == .linux) {
+        ssr_demo.linkLibC();
+        ssr_demo.linkSystemLibrary("pthread");
+    }
     ssr_demo.linkLibrary(lib);
     const install_ssr = b.addInstallArtifact(ssr_demo, .{});
     const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
     ssr_step.dependOn(&install_ssr.step);
+
+    // Alias build target for Hetzner deployment convenience
+    const megalith_ssr = b.addExecutable(.{
+        .name = "megalith-ssr",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("hetzner/megalith.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    megalith_ssr.root_module.addImport("ndb", ndb_module);
+    megalith_ssr.root_module.addImport("proto", proto_module);
+    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
+        megalith_ssr.root_module.addIncludePath(b.path("src/override"));
+    }
+    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/src"));
+    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/ccan"));
+    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
+    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
+    megalith_ssr.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, megalith_ssr);
+        megalith_ssr.linkFramework("Security");
+    }
+    if (target.result.os.tag == .linux) {
+        megalith_ssr.linkLibC();
+        megalith_ssr.linkSystemLibrary("pthread");
+    }
+    megalith_ssr.linkLibrary(lib);
+    const install_megalith_ssr = b.addInstallArtifact(megalith_ssr, .{});
+    const megalith_ssr_step = b.step("megalith-ssr", "Build the Hetzner SSR server (alias of ssr-demo)");
+    megalith_ssr_step.dependOn(&install_megalith_ssr.step);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });

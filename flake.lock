@@ -68,10 +68,29 @@
         "type": "github"
       }
     },
+    "nostrdb": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1757613352,
+        "narHash": "sha256-OiqxNjvYvRLIhR65OJPjgE5hrMjDX7SdP2WjpP/KZOI=",
+        "ref": "refs/heads/master",
+        "rev": "94644569a016ec49a7afa64b57ff3a04bcc59dc8",
+        "revCount": 533,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/damus-io/nostrdb"
+      },
+      "original": {
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/damus-io/nostrdb"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
+        "nostrdb": "nostrdb",
         "zig": "zig"
       }
     },
