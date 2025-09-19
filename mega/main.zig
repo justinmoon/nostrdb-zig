@@ -330,14 +330,14 @@ fn renderTimelinePage(
     try w.writeAll("<main>\n");
     try writeLookupForm(&w, npub_value);
     if (notes.len == 0) {
-        try w.writeAll("<section class=\"timeline\">\n");
+        try w.writeAll("<section class='timeline'>\n");
         try w.writeAll("<div class=\"empty\">No posts found for that npub.</div>\n</section>\n");
         try writeSampleDataHelp(&w);
         try w.writeAll("</main>\n</body></html>");
         return try list.toOwnedSlice(allocator);
     }
 
-    try w.writeAll("<section class=\\"timeline\\">\n<h2>Recent posts</h2>\n");
+    try w.writeAll("<section class='timeline'>\n<h2>Recent posts</h2>\n");
     for (notes) |res| try writeNote(&w, res.note);
     try w.writeAll("</section>\n");
     try writeSampleDataHelp(&w);
