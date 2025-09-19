@@ -12,6 +12,8 @@ pub const RelayStatus = struct {
     url: []const u8,
     eose: bool,
     err: ?[]const u8,
+    attempts: u32,
+    last_change_ms: ?u64,
 };
 
 pub const Status = struct {
@@ -30,6 +32,7 @@ pub const IngestionManager = struct {
     contacts_store: *contacts.Store,
     timeline_store: *timeline.Store,
     db: *ndb.Ndb,
+    ws_origin: ?[]const u8 = null,
 
     // concurrency control
     max_jobs: usize = 24,
@@ -45,6 +48,7 @@ pub const IngestionManager = struct {
         contacts_store: *contacts.Store,
         timeline_store: *timeline.Store,
         db: *ndb.Ndb,
+        ws_origin: ?[]const u8,
     ) !IngestionManager {
         // copy relay URLs to owned memory
         var rel_copy = try allocator.alloc([]const u8, relays.len);
@@ -53,7 +57,7 @@ pub const IngestionManager = struct {
             rel_copy[i] = try allocator.dupe(u8, url);
         }
 
-        return .{
+        var mgr = IngestionManager{
             .allocator = allocator,
             .relays = rel_copy,
             .limit = limit,
@@ -62,7 +66,10 @@ pub const IngestionManager = struct {
             .db = db,
             .jobs = std.AutoHashMap(timeline.PubKey, *Job).init(allocator),
             .queue = std.ArrayList(timeline.PubKey).empty,
+            .ws_origin = null,
         };
+        if (ws_origin) |o| mgr.ws_origin = try allocator.dupe(u8, o);
+        return mgr;
     }
 
     pub fn deinit(self: *IngestionManager) void {
@@ -79,6 +86,7 @@ pub const IngestionManager = struct {
         // free relays
         for (self.relays) |url| self.allocator.free(url);
         self.allocator.free(self.relays);
+        if (self.ws_origin) |o| self.allocator.free(o);
 
         self.queue.deinit(self.allocator);
         self.* = undefined;
@@ -89,6 +97,7 @@ pub const IngestionManager = struct {
         defer self.mutex.unlock();
 
         if (self.jobs.get(npub)) |_| {
+            std.log.info("ingest_svc: job already exists for npub", .{});
             return; // already enqueued or running
         }
 
@@ -107,15 +116,17 @@ pub const IngestionManager = struct {
                 self.allocator.destroy(job);
                 return err;
             };
+            std.log.info("ingest_svc: started job (relays={d})", .{self.relays.len});
         } else {
             // queue for later
             try self.queue.append(self.allocator, npub);
+            std.log.info("ingest_svc: queued job; running={d}/{d}", .{ self.running_count, self.max_jobs });
         }
     }
 
     pub fn status(self: *IngestionManager, npub: timeline.PubKey, allocator: Allocator) !Status {
         // snapshot shared job state under lock
-        var phase: Phase = .finished;
+        var phase: Phase = .initial;
         var last_error: ?[]const u8 = null;
         var first_post_ms: ?u64 = null;
         var job_ptr: ?*Job = null;
@@ -153,11 +164,24 @@ pub const IngestionManager = struct {
         var relay_stats = try allocator.alloc(RelayStatus, self.relays.len);
         var i: usize = 0;
         while (i < self.relays.len) : (i += 1) {
-            relay_stats[i] = RelayStatus{
-                .url = self.relays[i],
-                .eose = if (job_ptr) |j| j.phase == .finished else true,
-                .err = null,
-            };
+            if (job_ptr) |j| {
+                const d = j.diag[i];
+                relay_stats[i] = RelayStatus{
+                    .url = d.url,
+                    .eose = d.eose,
+                    .err = if (d.last_error) |e| allocator.dupe(u8, e) catch null else null,
+                    .attempts = d.attempts,
+                    .last_change_ms = if (d.last_change_ms == 0) null else d.last_change_ms,
+                };
+            } else {
+                relay_stats[i] = RelayStatus{
+                    .url = self.relays[i],
+                    .eose = true,
+                    .err = null,
+                    .attempts = 0,
+                    .last_change_ms = null,
+                };
+            }
         }
 
         return Status{
@@ -207,9 +231,22 @@ const Job = struct {
 
     // snapshot of configured relays (borrowed from manager)
     relays_view: []const []const u8,
+    diag: []ingest.diag.RelayDiag,
 
     fn init(allocator: Allocator, npub: timeline.PubKey, relays: []const []const u8) !Job {
-        _ = allocator;
+        var di = try allocator.alloc(ingest.diag.RelayDiag, relays.len);
+        errdefer allocator.free(di);
+        var i: usize = 0;
+        while (i < relays.len) : (i += 1) {
+            di[i] = ingest.diag.RelayDiag{
+                .url = relays[i],
+                .attempts = 0,
+                .eose = false,
+                .last_error = null,
+                .last_change_ms = 0,
+            };
+        }
+
         return .{
             .npub = npub,
             .phase = .initial,
@@ -218,11 +255,14 @@ const Job = struct {
             .last_error = null,
             .thread = null,
             .relays_view = relays,
+            .diag = di,
         };
     }
 
     fn deinit(self: *Job, allocator: Allocator) void {
         if (self.last_error) |e| allocator.free(e);
+        for (self.diag) |*d| d.deinit(allocator);
+        allocator.free(self.diag);
         self.* = undefined;
     }
 
@@ -240,10 +280,24 @@ const Job = struct {
 };
 
 fn jobMain(job: *Job, manager: *IngestionManager) void {
+    // Log start and relay list
+    {
+        var buf: [256]u8 = undefined;
+        var w = std.io.fixedBufferStream(&buf);
+        const writer = w.writer();
+        writer.writeAll("ingest_svc: job start relays=") catch {};
+        var i: usize = 0;
+        while (i < job.relays_view.len) : (i += 1) {
+            if (i != 0) writer.writeAll(",") catch {};
+            writer.writeAll(job.relays_view[i]) catch {};
+        }
+        std.log.info("{s}", .{w.getWritten()});
+    }
     // contacts stage with simple retry/backoff
     manager.mutex.lock();
     job.phase = .contacts;
     manager.mutex.unlock();
+    std.log.info("ingest_svc: contacts stage (elapsed={d}ms)", .{@as(u64, @intCast(std.time.milliTimestamp())) - job.start_ms});
     var backoff_ms: u64 = 200;
     const deadline_ms = job.start_ms + 3 * 60 * 1000; // 3 minutes
 
@@ -261,8 +315,9 @@ fn jobMain(job: *Job, manager: *IngestionManager) void {
             return;
         }
 
-        fetcher.fetchContacts(job.npub, manager.relays, manager.db) catch |err| {
+        fetcher.fetchContactsEx(job.npub, job.relays_view, manager.db, job.diag, job.start_ms, manager.ws_origin) catch |err| {
             storeError(job, manager.allocator, @errorName(err));
+            std.log.warn("ingest_svc: contacts fetch error: {s}", .{@errorName(err)});
             std.Thread.sleep(backoff_ms * std.time.ns_per_ms);
             backoff_ms = @min(backoff_ms * 2, 2_000);
             continue;
@@ -275,6 +330,7 @@ fn jobMain(job: *Job, manager: *IngestionManager) void {
     manager.mutex.lock();
     job.phase = .posts_backfill;
     manager.mutex.unlock();
+    std.log.info("ingest_svc: posts stage (elapsed={d}ms)", .{@as(u64, @intCast(std.time.milliTimestamp())) - job.start_ms});
 
     var pipeline = ingest.Pipeline.init(manager.allocator, job.npub, manager.limit, manager.contacts_store, manager.timeline_store, manager.db);
 
@@ -290,26 +346,30 @@ fn jobMain(job: *Job, manager: *IngestionManager) void {
             return;
         }
 
-        if (pipeline.run(manager.relays)) {
-            manager.mutex.lock();
-            job.phase = .finished;
-            manager.mutex.unlock();
-            manager.onJobFinished(job.npub);
-            return;
-        } else |err| switch (err) {
+        const ok = pipeline.runEx(job.relays_view, job.diag, job.start_ms, manager.ws_origin) catch |err| switch (err) {
             ingest.PipelineError.NoFollowSet => {
                 manager.mutex.lock();
                 job.phase = .finished;
                 manager.mutex.unlock();
+                std.log.info("ingest_svc: finished (no follows)", .{});
                 manager.onJobFinished(job.npub);
                 return;
             },
             else => {
                 storeError(job, manager.allocator, @errorName(err));
+                std.log.warn("ingest_svc: posts error: {s}", .{@errorName(err)});
                 std.Thread.sleep(backoff_ms * std.time.ns_per_ms);
                 backoff_ms = @min(backoff_ms * 2, 2_000);
                 continue;
             },
+        };
+        if (ok) {
+            manager.mutex.lock();
+            job.phase = .finished;
+            manager.mutex.unlock();
+            std.log.info("ingest_svc: finished (elapsed={d}ms)", .{@as(u64, @intCast(std.time.milliTimestamp())) - job.start_ms});
+            manager.onJobFinished(job.npub);
+            return;
         }
     }
 }

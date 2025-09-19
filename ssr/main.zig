@@ -22,6 +22,7 @@ const Settings = struct {
     port: u16,
     limit: u32,
     relays: []const []const u8,
+    ws_origin: []const u8,
 };
 
 const App = struct {
@@ -126,6 +127,15 @@ const App = struct {
             try self.respondHome(req, npub, "Could not decode that npub.");
             return;
         };
+
+        // Auto-start ingestion if we have nothing stored yet for this npub
+        const meta = timeline.getMeta(self.timeline_store, pubkey) catch timeline.TimelineMeta{};
+        if (meta.count == 0) {
+            std.log.info("auto-starting ingestion for npub (empty timeline)", .{});
+            self.ingestion.ensureJob(pubkey) catch |err| {
+                std.log.warn("failed to ensure ingestion job: {s}", .{@errorName(err)});
+            };
+        }
 
         const mode = findQueryValue(query, "mode");
         if (mode) |m| {
@@ -336,7 +346,7 @@ pub fn main() !void {
     defer timeline_store.deinit();
 
     // Initialize ingestion manager
-    var ingestion_manager = try ingest_service.IngestionManager.init(allocator, settings.relays, settings.limit, &contacts_store, &timeline_store, &db);
+    var ingestion_manager = try ingest_service.IngestionManager.init(allocator, settings.relays, settings.limit, &contacts_store, &timeline_store, &db, settings.ws_origin);
     defer ingestion_manager.deinit();
 
     const address = try std.net.Address.parseIp("0.0.0.0", settings.port);
@@ -378,6 +388,7 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
     var port: u16 = 8080;
     var limit: u32 = 100;
     var relays_list = std.ArrayList([]const u8).empty;
+    var ws_origin: []const u8 = allocator.dupe(u8, "https://nostrdb-ssr.local") catch return CliError.OutOfMemory;
 
     while (iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--db-path")) {
@@ -406,9 +417,18 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
             while (it.next()) |item| {
                 const trimmed = std.mem.trim(u8, item, " ");
                 if (trimmed.len == 0) continue;
+                // simple validation: expect ws:// or wss:// and at least one dot
+                if (std.mem.indexOf(u8, trimmed, "ws://") == null and std.mem.indexOf(u8, trimmed, "wss://") == null) continue;
+                if (std.mem.indexOfScalar(u8, trimmed, '.') == null) continue;
                 const owned = allocator.dupe(u8, trimmed) catch return CliError.OutOfMemory;
                 try relays_list.append(allocator, owned);
             }
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--ws-origin")) {
+            const value = iter.next() orelse return CliError.MissingValue;
+            ws_origin = allocator.dupe(u8, value) catch return CliError.OutOfMemory;
             continue;
         }
 
@@ -422,12 +442,25 @@ fn parseSettings(allocator: std.mem.Allocator) CliError!Settings {
         return CliError.UnknownArgument;
     }
 
-    const relays = try relays_list.toOwnedSlice(allocator);
+    var relays = try relays_list.toOwnedSlice(allocator);
+    if (relays.len == 0) {
+        // allocate defaults into the same allocator-backed slice type
+        relays = try allocator.alloc([]const u8, 8);
+        relays[0] = try allocator.dupe(u8, "wss://relay.damus.io");
+        relays[1] = try allocator.dupe(u8, "wss://nostr.wine");
+        relays[2] = try allocator.dupe(u8, "wss://nos.lol");
+        relays[3] = try allocator.dupe(u8, "wss://relayable.org");
+        relays[4] = try allocator.dupe(u8, "wss://eden.nostr.land");
+        relays[5] = try allocator.dupe(u8, "wss://offchain.pub");
+        relays[6] = try allocator.dupe(u8, "wss://relay.snort.social");
+        relays[7] = try allocator.dupe(u8, "wss://nostr-pub.wellorder.net");
+    }
     return .{
         .db_path = db_path,
         .port = port,
         .limit = limit,
         .relays = relays,
+        .ws_origin = ws_origin,
     };
 }
 
@@ -439,6 +472,7 @@ fn printHelp() !void {
         "  --port <port>     HTTP port to bind (default: 8080)\n" ++
         "  --limit <n>       Max posts to show per request (default: 100, max 1024)\n" ++
         "  --relays <list>   Comma-separated relay URLs (for ingestion manager)\n" ++
+        "  --ws-origin <url> Origin header to use for WS handshakes (default: https://nostrdb-ssr.local)\n" ++
         "  --help            Show this message\n\n" ++
         "Example (using sample events):\n" ++
         "  make testdata/many-events.json\n" ++
@@ -715,11 +749,17 @@ fn renderStatusJson(allocator: std.mem.Allocator, st: Status) ![]u8 {
         try w.writeAll("\"url\":");
         try jsonEscapeString(&w, rs.url);
         try w.print(",\"eose\":{s},", .{if (rs.eose) "true" else "false"});
+        try w.print("\"attempts\":{d},", .{rs.attempts});
+        if (rs.last_change_ms) |ms| {
+            try w.print("\"last_change_ms\":{d},", .{ms});
+        } else {
+            try w.writeAll("\"last_change_ms\":null,");
+        }
         if (rs.err) |err_str| {
-            try w.writeAll("\"error\":");
+            try w.writeAll("\"last_error\":");
             try jsonEscapeString(&w, err_str);
         } else {
-            try w.writeAll("\"error\":null");
+            try w.writeAll("\"last_error\":null");
         }
         try w.writeAll("}");
     }
@@ -753,7 +793,9 @@ fn writeStatusBanner(writer: anytype, npub_value: []const u8) !void {
     try writer.writeAll("      const r = await fetch('/status?npub=' + encodeURIComponent(npub));\n");
     try writer.writeAll("      if(!r.ok) throw new Error('http '+r.status);\n");
     try writer.writeAll("      const j = await r.json();\n");
-    try writer.writeAll("      document.getElementById('status-text').textContent = 'phase: ' + j.phase + ' — events: ' + j.events_ingested;\n");
+    try writer.writeAll("      let text = 'phase: ' + j.phase + ' — events: ' + j.events_ingested;\n");
+    try writer.writeAll("      if (j.last_error) { text += ' — error: ' + j.last_error; }\n");
+    try writer.writeAll("      document.getElementById('status-text').textContent = text;\n");
     try writer.writeAll("      if (j.events_ingested > lastCount) { lastCount = j.events_ingested; window.location.reload(); return; }\n");
     try writer.writeAll("      if (j.phase === 'finished') { document.getElementById('spin').style.display='none'; }\n");
     try writer.writeAll("    } catch(e) { document.getElementById('status-text').textContent = 'status unavailable'; }\n");

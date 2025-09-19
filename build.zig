@@ -176,6 +176,12 @@ pub fn build(b: *std.Build) void {
     net_module.addImport("xev", xev.module("xev"));
     net_module.addImport("websocket", websocket_pkg.module("websocket"));
 
+    const diag_module = b.createModule(.{
+        .root_source_file = b.path("ingest/diag.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const contacts_module = b.createModule(.{
         .root_source_file = b.path("contacts/lib.zig"),
         .target = target,
@@ -185,6 +191,7 @@ pub fn build(b: *std.Build) void {
     contacts_module.addImport("proto", proto_module);
     contacts_module.addImport("net", net_module);
     contacts_module.addImport("ndb", ndb_module);
+    contacts_module.addImport("ingdiag", diag_module);
 
     const timeline_module = b.createModule(.{
         .root_source_file = b.path("timeline/lib.zig"),
@@ -203,6 +210,7 @@ pub fn build(b: *std.Build) void {
     ingest_module.addImport("contacts", contacts_module);
     ingest_module.addImport("timeline", timeline_module);
     ingest_module.addImport("ndb", ndb_module);
+    ingest_module.addImport("ingdiag", diag_module);
 
     const megalith = b.addExecutable(.{
         .name = "megalith",
@@ -242,6 +250,7 @@ pub fn build(b: *std.Build) void {
     ssr_demo.root_module.addImport("contacts", contacts_module);
     ssr_demo.root_module.addImport("timeline", timeline_module);
     ssr_demo.root_module.addImport("ingest", ingest_module);
+    ssr_demo.root_module.addImport("ingdiag", diag_module);
     if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
         ssr_demo.root_module.addIncludePath(b.path("src/override"));
     }
@@ -258,6 +267,34 @@ pub fn build(b: *std.Build) void {
     const install_ssr = b.addInstallArtifact(ssr_demo, .{});
     const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
     ssr_step.dependOn(&install_ssr.step);
+
+    // Minimal websocket smoke client (no repo code) for relay debugging
+    const ws_smoke = b.addExecutable(.{
+        .name = "ws-smoke",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/ws_smoke.zig"), .target = target, .optimize = optimize }),
+    });
+    ws_smoke.root_module.addImport("websocket", websocket_pkg.module("websocket"));
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, ws_smoke);
+        ws_smoke.linkFramework("Security");
+    }
+    const install_ws_smoke = b.addInstallArtifact(ws_smoke, .{});
+    const ws_smoke_step = b.step("ws-smoke", "Build the websocket smoke tester");
+    ws_smoke_step.dependOn(&install_ws_smoke.step);
+
+    // Contacts + posts minimal client
+    const ws_contacts = b.addExecutable(.{
+        .name = "ws-contacts",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/ws_contacts.zig"), .target = target, .optimize = optimize }),
+    });
+    ws_contacts.root_module.addImport("websocket", websocket_pkg.module("websocket"));
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, ws_contacts);
+        ws_contacts.linkFramework("Security");
+    }
+    const install_ws_contacts = b.addInstallArtifact(ws_contacts, .{});
+    const ws_contacts_step = b.step("ws-contacts", "Build the contacts+posts smoke client");
+    ws_contacts_step.dependOn(&install_ws_contacts.step);
 
     // Unit tests target for Zig wrappers and Phase 1 tests
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/test.zig"), .target = target, .optimize = optimize }) });
@@ -278,6 +315,7 @@ pub fn build(b: *std.Build) void {
     tests.root_module.addImport("contacts", contacts_module);
     tests.root_module.addImport("timeline", timeline_module);
     tests.root_module.addImport("ingest", ingest_module);
+    tests.root_module.addImport("ingdiag", diag_module);
     tests.root_module.addImport("ndb", ndb_module);
     tests.root_module.addImport("c", c_module);
     const proto_tests_module = b.createModule(.{
@@ -322,6 +360,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addImport("cli_tests", cli_tests_module);
+    const handshake_tests_module = b.createModule(.{
+        .root_source_file = b.path("tests/handshake_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport("handshake_tests", handshake_tests_module);
     if (target.result.os.tag == .macos) {
         configureAppleSdk(b, tests);
         tests.linkFramework("Security");
@@ -330,4 +374,24 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run Phase 1 tests");
     test_step.dependOn(&run_tests.step);
+
+    // E2E SSR runner (exec), depends on building ssr-demo
+    const ssr_e2e = b.addExecutable(.{
+        .name = "ssr-e2e",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tests/ssr_e2e.zig"), .target = target, .optimize = optimize }),
+    });
+    ssr_e2e.root_module.addImport("net", net_module);
+    ssr_e2e.root_module.addImport("proto", proto_module);
+    ssr_e2e.linkLibrary(lib);
+    if (target.result.os.tag == .macos) {
+        configureAppleSdk(b, ssr_e2e);
+        ssr_e2e.linkFramework("Security");
+    }
+    const install_e2e = b.addInstallArtifact(ssr_e2e, .{});
+    const e2e_run = b.addRunArtifact(ssr_e2e);
+    // Ensure ssr-demo is built before running the e2e runner
+    e2e_run.step.dependOn(&install_ssr.step);
+    const e2e_step = b.step("ssr-e2e", "Run SSR end-to-end test against a mock relay");
+    e2e_step.dependOn(&install_e2e.step);
+    e2e_step.dependOn(&e2e_run.step);
 }

@@ -3,6 +3,7 @@ const ascii = std.ascii;
 const proto = @import("proto");
 const net = @import("net");
 const ndb = @import("ndb");
+const diag = @import("ingdiag");
 const clmdb = @cImport({
     @cInclude("lmdb.h");
 });
@@ -204,7 +205,7 @@ fn parseStoredList(self: *Store, val: clmdb.MDB_val) StoreError!ContactList {
 }
 
 fn ensureDirectory(path: []const u8) !void {
-    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+    std.fs.cwd().makePath(path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -359,7 +360,7 @@ pub const Fetcher = struct {
     store: *Store,
     parser: Parser,
 
-    pub const FetchError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || StoreError || error{CompletionTimeout};
+    pub const FetchError = Allocator.Error || net.RelayClientConnectError || net.RelayClientSendError || ndb.Error || proto.ReqBuilderError || Parser.ParseError || StoreError || error{CompletionTimeout, NoAvailableRelays};
 
     pub fn init(allocator: Allocator, store: *Store) Fetcher {
         return .{
@@ -374,46 +375,95 @@ pub const Fetcher = struct {
     }
 
     pub fn fetchContacts(self: *Fetcher, npub: ContactKey, relays: []const []const u8, db: *ndb.Ndb) FetchError!void {
+        // Backwards-compatible wrapper without diagnostics and origin
+        return self.fetchContactsEx(npub, relays, db, null, 0, null);
+    }
+
+    pub fn fetchContactsEx(
+        self: *Fetcher,
+        npub: ContactKey,
+        relays: []const []const u8,
+        db: *ndb.Ndb,
+        diag_states: ?[]diag.RelayDiag,
+        job_start_ms: u64,
+        origin: ?[]const u8,
+    ) FetchError!void {
         if (relays.len == 0) return;
 
         const filter = try proto.buildContactsFilter(self.allocator, .{ .author = npub });
         defer self.allocator.free(filter);
 
-        const clients = try self.allocator.alloc(ClientState, relays.len);
-        var initialized: usize = 0;
-        errdefer {
-            var idx: usize = 0;
-            while (idx < initialized) : (idx += 1) {
-                clients[idx].deinit(self.allocator);
-            }
-            self.allocator.free(clients);
-        }
+        var clients = std.array_list.Managed(ClientState).init(self.allocator);
+        defer clients.deinit();
 
+        var connected: usize = 0;
         for (relays, 0..) |relay_url, idx| {
-            clients[idx] = try ClientState.init(self.allocator, relay_url, filter);
-            initialized += 1;
+            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            if (diag_states) |ds| {
+                ds[idx].attempts += 1;
+                ds[idx].last_change_ms = if (job_start_ms == 0) 0 else now_ms - job_start_ms;
+            }
+            log.info("contacts: connecting to {s}", .{relay_url});
+            var client = net.RelayClient.init(.{
+                .allocator = self.allocator,
+                .url = relay_url,
+                .origin = origin,
+            }) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("contacts: init failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                continue;
+            };
+            errdefer client.deinit();
+
+            client.connect(null) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("contacts: connect failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                client.deinit();
+                continue;
+            };
+
+            const sub_id = try proto.nextSubId(self.allocator);
+            errdefer self.allocator.free(sub_id);
+
+            const filters = [_][]const u8{filter};
+            const req = try proto.buildReq(self.allocator, sub_id, &filters);
+            defer self.allocator.free(req);
+
+            client.sendText(req) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("contacts: send REQ failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                client.close();
+                client.deinit();
+                continue;
+            };
+            log.info("contacts: REQ sent to {s}", .{relay_url});
+
+            const st = ClientState{ .client = client, .sub_id = sub_id, .done = false, .relay_index = idx };
+            try clients.append(st);
+            connected += 1;
         }
 
-        var active = initialized;
+        if (connected == 0) return error.NoAvailableRelays;
+
+        var active = connected;
         var idle_loops: usize = 0;
 
         while (active > 0) {
             var progressed = false;
-
-            for (clients[0..initialized]) |*entry| {
+            var i: usize = 0;
+            while (i < clients.items.len) : (i += 1) {
+                var entry = &clients.items[i];
                 if (entry.done) continue;
-                const msg_opt = try entry.client.nextMessage(2_000);
+                const msg_opt = entry.client.nextMessage(2_000) catch |err| switch (err) {
+                    error.Timeout => null,
+                };
                 if (msg_opt) |msg| {
                     progressed = true;
-                    try self.handleMessage(msg, npub, db, entry);
+                    try self.handleMessage(msg, npub, db, entry, diag_states, job_start_ms);
                 }
                 if (entry.done) {
                     active -= 1;
-                    const close_msg = try proto.buildClose(self.allocator, entry.sub_id);
-                    defer self.allocator.free(close_msg);
-                    entry.client.sendText(close_msg) catch |err| {
-                        log.warn("failed to send CLOSE frame: {}", .{err});
-                    };
+                    // Avoid sending CLOSE frames here; we'll teardown on cleanup
                 }
             }
 
@@ -425,18 +475,26 @@ pub const Fetcher = struct {
             }
         }
 
-        var idx: usize = 0;
-        while (idx < initialized) : (idx += 1) {
-            clients[idx].deinit(self.allocator);
+        // Cleanup
+        var j: usize = 0;
+        while (j < clients.items.len) : (j += 1) {
+            clients.items[j].deinit(self.allocator);
         }
-        self.allocator.free(clients);
 
         if (active != 0) {
             return error.CompletionTimeout;
         }
     }
 
-    fn handleMessage(self: *Fetcher, msg: net.RelayMessage, npub: ContactKey, db: *ndb.Ndb, entry: *ClientState) FetchError!void {
+    fn handleMessage(
+        self: *Fetcher,
+        msg: net.RelayMessage,
+        npub: ContactKey,
+        db: *ndb.Ndb,
+        entry: *ClientState,
+        diag_states: ?[]diag.RelayDiag,
+        job_start_ms: u64,
+    ) FetchError!void {
         var owned = msg;
         defer owned.deinit(self.allocator);
 
@@ -454,6 +512,14 @@ pub const Fetcher = struct {
             .eose => |eose| {
                 if (!std.mem.eql(u8, eose.subId(), entry.sub_id)) return;
                 entry.done = true;
+                const now_ms: u64 = @intCast(std.time.milliTimestamp());
+                if (diag_states) |ds| {
+                    if (entry.relay_index < ds.len) {
+                        ds[entry.relay_index].eose = true;
+                        ds[entry.relay_index].last_change_ms = if (job_start_ms == 0) 0 else now_ms - job_start_ms;
+                    }
+                }
+                log.info("contacts: EOSE from relay_index={d}", .{entry.relay_index});
             },
             .notice => |notice| {
                 log.info("relay notice: {s}", .{notice.text()});
@@ -466,6 +532,7 @@ pub const Fetcher = struct {
         client: net.RelayClient,
         sub_id: []u8,
         done: bool = false,
+        relay_index: usize = 0,
 
         fn init(allocator: Allocator, relay_url: []const u8, filter: []const u8) !ClientState {
             var client = try net.RelayClient.init(.{
@@ -481,6 +548,7 @@ pub const Fetcher = struct {
 
             const filters = [_][]const u8{filter};
             const req = try proto.buildReq(allocator, sub_id, &filters);
+            log.info("contacts REQ to {s}: {s}", .{ relay_url, req });
             defer allocator.free(req);
 
             try client.sendText(req);
@@ -489,11 +557,11 @@ pub const Fetcher = struct {
                 .client = client,
                 .sub_id = sub_id,
                 .done = false,
+                .relay_index = 0,
             };
         }
 
         fn deinit(self: *ClientState, allocator: Allocator) void {
-            self.client.close();
             self.client.deinit();
             allocator.free(self.sub_id);
         }

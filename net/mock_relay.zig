@@ -240,7 +240,9 @@ const RenderedText = struct {
 const ExtractError = error{InvalidRequest};
 
 fn extractSubId(dest_allocator: Allocator, temp_allocator: Allocator, request: []const u8) (Allocator.Error || ExtractError)![]u8 {
-    var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, request, .{});
+    var parsed = std.json.parseFromSlice(std.json.Value, temp_allocator, request, .{}) catch {
+        return ExtractError.InvalidRequest;
+    };
     defer parsed.deinit();
 
     const root = parsed.value;

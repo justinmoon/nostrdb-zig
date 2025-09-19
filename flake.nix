@@ -135,6 +135,29 @@
         
         # CI output that can be run with `nix run .#ci`
         packages.ci = ciScript;
+
+        # Build only the SSR demo server (ssr-demo)
+        packages.ssr-demo = pkgs.stdenv.mkDerivation {
+          pname = "ssr-demo";
+          version = "0.0.1";
+
+          src = ./.;
+
+          nativeBuildInputs = devDeps ++ [ pkgs.cacert ];
+
+          buildPhase = ''
+            set -euo pipefail
+            export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            ${pkgs.git}/bin/git submodule update --init --recursive
+            export PATH="${zigPkg}/bin:$PATH"
+            ${zigPkg}/bin/zig build ssr-demo -Doptimize=ReleaseSafe --prefix $out
+          '';
+
+          installPhase = ''
+            echo "Installed ssr-demo to $out/bin"
+          '';
+        };
         
         # Default package (builds the project)
         packages.default = pkgs.stdenv.mkDerivation {
@@ -182,6 +205,12 @@
         apps.ci = {
           type = "app";
           program = "${ciScript}/bin/ci";
+        };
+
+        # Run the SSR demo via: nix run .#ssr
+        apps.ssr = {
+          type = "app";
+          program = "${self.packages.${system}.ssr-demo}/bin/ssr-demo";
         };
       });
 }

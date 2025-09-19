@@ -283,7 +283,7 @@ pub fn getEvent(store: *Store, id: EventId) StoreError!?EventRecord {
 }
 
 fn ensureDirectory(path: []const u8) !void {
-    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+    std.fs.cwd().makePath(path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };

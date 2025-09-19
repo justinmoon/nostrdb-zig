@@ -10,6 +10,7 @@ test {
     _ = @import("ingest_tests");
     _ = @import("cli_tests");
     _ = @import("test_phase5.zig");
+    _ = @import("handshake_tests");
 }
 
 // Debug tests removed - Event 3 signature issue fixed

@@ -158,6 +158,16 @@ Acceptance
 
 --------------------------------------------------------------------------------
 
+Implementation TODOs (from Integration)
+
+- Relay discovery (NIP‑65): On job start, fetch the user’s Relay List Metadata (kind 10002) across the seed relays; merge discovered ‘r’ tag URLs with the configured defaults to widen coverage and speed up contacts/posts ingestion. Prefer read‑capable relays when annotated.
+- Status detail: expose discovered relay set in `/status` and UI banner; include per‑relay errors for visibility (connect/send/EOSE timeouts).
+- Resubscription timing: advance to live phase sooner on first EOSE to reduce perceived idle time; keep backfill on others.
+
+Note: To keep the demo simple for now, the SSR uses a multi‑relay default set when `--relays` is not provided or invalid entries are given. Relay discovery can be layered on afterward.
+
+--------------------------------------------------------------------------------
+
 Design Notes And Rationale
 
 - Single LMDB environments for contacts/timeline are multi‑tenant by design:

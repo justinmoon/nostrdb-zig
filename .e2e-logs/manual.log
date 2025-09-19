@@ -1,0 +1,73 @@
+info: nostrdb SSR demo listening on http://0.0.0.0:8090 (db: /tmp/ssr-db-iter, limit: 100)
+info: auto-starting ingestion for npub (empty timeline)
+info: ingest_svc: started job (relays=1)
+info: ingest_svc: job start relays=wss://relay.damus.io
+info: ingest_svc: contacts stage (elapsed=0ms)
+info(contacts): contacts: connecting to wss://relay.damus.io
+info(contacts): contacts: REQ sent to wss://relay.damus.io
+thread 1961432 panic: Invalid free
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/fs/File.zig:1417:21: 0x100afd8bf in readVec (ssr-demo)
+                    return error.EndOfStream;
+                    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Io/Reader.zig:1028:36: 0x100cb878f in fillUnbuffered (ssr-demo)
+    while (r.end < r.seek + n) _ = try r.vtable.readVec(r, &bufs);
+                                   ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Io/Reader.zig:1014:5: 0x100c6b587 in fill (ssr-demo)
+    return fillUnbuffered(r, n);
+    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Io/Reader.zig:454:5: 0x100c3b27b in peek (ssr-demo)
+    try r.fill(n);
+    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/crypto/tls/Client.zig:1284:5: 0x100cdcb97 in failRead (ssr-demo)
+    return error.ReadFailed;
+    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/crypto/tls/Client.zig:1107:17: 0x100c9f423 in readIndirect (ssr-demo)
+                return failRead(c, error.TlsConnectionTruncated);
+                ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/crypto/tls/Client.zig:1083:5: 0x100c5194b in stream (ssr-demo)
+    return readIndirect(c);
+    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Io/Reader.zig:178:15: 0x100a33453 in stream (ssr-demo)
+    const n = try r.vtable.stream(r, w, limit);
+              ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:444:27: 0x100c1adf3 in read (ssr-demo)
+                const n = try tls_client.client.reader.stream(&w, .limited(buf.len));
+                          ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/proto.zig:130:19: 0x100d16bdb in fill__anon_375628 (ssr-demo)
+        const n = try stream.read(self.buf.data[pos..]);
+                  ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/heap/debug_allocator.zig:659:21: 0x100ae14eb in freeLarge (ssr-demo)
+                    @panic("Invalid free");
+                    ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/heap/debug_allocator.zig:867:31: 0x100acd603 in free (ssr-demo)
+                self.freeLarge(old_memory, alignment, return_address);
+                              ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/mem/Allocator.zig:147:25: 0x100a64487 in deinit (ssr-demo)
+    return a.vtable.free(a.ptr, memory, alignment, ret_addr);
+                        ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:544:26: 0x100c5775b in deinit (ssr-demo)
+        self.arena.deinit();
+                         ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:421:30: 0x100c21c4b in close (ssr-demo)
+            tls_client.deinit();
+                             ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:320:32: 0x100c21ae3 in close (ssr-demo)
+        defer self.stream.close();
+                               ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:257:35: 0x100d16fe3 in read (ssr-demo)
+                        self.close(.{ .code = 1002 }) catch unreachable;
+                                  ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:201:38: 0x100d176eb in readLoop__anon_375370 (ssr-demo)
+            const message = self.read() catch |err| switch (err) {
+                                     ^
+/Users/justin/code/projects/nostrdb-zig/worktrees/ssr-timeline-improvement/net/relay_client.zig:324:28: 0x100cde4e7 in readLoopThread (ssr-demo)
+            client.readLoop(&handler) catch |err| {
+                           ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Thread.zig:510:13: 0x100caeb33 in callFn__anon_43563 (ssr-demo)
+            @call(.auto, f, args);
+            ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Thread.zig:782:30: 0x100c56def in entryFn (ssr-demo)
+                return callFn(f, args_ptr.*);
+                             ^
+???:?:?: 0x19df33c0b in ??? (libsystem_pthread.dylib)
+???:?:?: 0x19df2eb7f in ??? (libsystem_pthread.dylib)

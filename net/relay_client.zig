@@ -20,6 +20,8 @@ pub const Options = struct {
     url: []const u8,
     connect_timeout_ms: u32 = 5_000,
     read_timeout_ms: u32 = 0,
+    // Optional Origin header to be sent during the handshake
+    origin: ?[]const u8 = null,
 };
 
 pub const ConnectError = error{
@@ -48,6 +50,7 @@ pub const RelayClient = struct {
     port: u16,
     use_tls: bool,
     options: Options,
+    origin: ?[]u8 = null,
 
     parser: message.Parser,
 
@@ -55,6 +58,7 @@ pub const RelayClient = struct {
 
     ws_client: ?websocket.Client = null,
     reader_thread: ?std.Thread = null,
+    loop_handler: ConnectionHandler = .{ .parent = undefined },
 
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
@@ -80,7 +84,7 @@ pub const RelayClient = struct {
         var parts = try parseUrl(allocator, url_copy);
         errdefer parts.deinit(allocator);
 
-        return .{
+        var self: RelayClient = .{
             .allocator = allocator,
             .url_text = url_copy,
             .host = parts.host,
@@ -93,21 +97,35 @@ pub const RelayClient = struct {
                 null
             else
                 @as(u64, options.read_timeout_ms) * std.time.ns_per_ms,
+            .origin = null,
         };
+
+        if (options.origin) |o| {
+            self.origin = try allocator.dupe(u8, o);
+        }
+
+        return self;
     }
 
     pub fn deinit(self: *RelayClient) void {
-        self.close();
+        self.stop_requested.store(true, .monotonic);
+        // First, close the websocket to unblock the read loop
+        if (self.ws_client) |*client| {
+            client.close(.{}) catch {};
+        }
+        // Then wait for the read loop to exit
         self.joinReaderThread();
-        self.drainQueue();
+        // Now it is safe to deinit the websocket client
         if (self.ws_client) |*client| {
             client.deinit();
             self.ws_client = null;
         }
+        self.drainQueue();
         self.parser.deinit();
         self.allocator.free(self.url_text);
         self.allocator.free(self.host);
         self.allocator.free(self.path);
+        if (self.origin) |o| self.allocator.free(o);
     }
 
     pub fn state(self: *const RelayClient) RelayClientState {
@@ -139,7 +157,50 @@ pub const RelayClient = struct {
             self.state_internal = .failed;
         }
 
-        client.handshake(self.path, .{ .timeout_ms = self.options.connect_timeout_ms }) catch |err| {
+        // Build extra headers: Host and optional Origin
+        var headers_buf: [512]u8 = undefined;
+        var pos: usize = 0;
+        // Host header (without port)
+        {
+            const h = "host: ";
+            if (pos + h.len + self.host.len + 2 > headers_buf.len) {
+                self.state_internal = .failed;
+                client.deinit();
+                return ConnectError.HandshakeFailed;
+            }
+            @memcpy(headers_buf[pos .. pos + h.len], h);
+            pos += h.len;
+            @memcpy(headers_buf[pos .. pos + self.host.len], self.host);
+            pos += self.host.len;
+            headers_buf[pos] = '\r';
+            headers_buf[pos + 1] = '\n';
+            pos += 2;
+        }
+        if (self.origin) |o| {
+            const h = "origin: ";
+            if (pos + h.len + o.len + 2 > headers_buf.len) {
+                self.state_internal = .failed;
+                client.deinit();
+                return ConnectError.HandshakeFailed;
+            }
+            @memcpy(headers_buf[pos .. pos + h.len], h);
+            pos += h.len;
+            @memcpy(headers_buf[pos .. pos + o.len], o);
+            pos += o.len;
+            headers_buf[pos] = '\r';
+            headers_buf[pos + 1] = '\n';
+            pos += 2;
+        }
+
+        const extra_headers: ?[]const u8 = if (pos == 0) null else headers_buf[0..pos];
+
+        client.handshake(self.path, .{ .timeout_ms = self.options.connect_timeout_ms, .headers = extra_headers }) catch |err| {
+            if (std.mem.eql(u8, @errorName(err), "InvalidHandshakeResponse")) {
+                log.err(
+                    "handshake invalid for {s}:{d}{s} tls={} origin={s}",
+                    .{ self.host, self.port, self.path, self.use_tls, if (self.origin) |_| "set" else "none" },
+                );
+            }
             log.err("handshake failed: {}", .{err});
             return ConnectError.HandshakeFailed;
         };
@@ -148,8 +209,9 @@ pub const RelayClient = struct {
         self.state_internal = .connected;
         self.stop_requested.store(false, .monotonic);
 
-        const reader = std.Thread.spawn(.{}, readLoopThread, .{self}) catch |err| {
-            log.err("failed to spawn reader thread: {}", .{err});
+        self.loop_handler = ConnectionHandler{ .parent = self };
+        const reader = client.readLoopInNewThread(&self.loop_handler) catch |err| {
+            log.err("failed to start read loop thread: {}", .{err});
             self.ws_client.?.deinit();
             self.ws_client = null;
             self.state_internal = .failed;
@@ -263,23 +325,7 @@ pub const RelayClient = struct {
         }
     }
 
-    fn readLoopThread(self: *RelayClient) void {
-        var handler = ConnectionHandler{ .parent = self };
-        if (self.ws_client) |*client| {
-            var had_error = false;
-            client.readLoop(&handler) catch |err| {
-                had_error = true;
-                log.err("websocket read loop terminated: {}", .{err});
-            };
-            self.state_internal = if (had_error) .failed else .closed;
-            client.deinit();
-            self.ws_client = null;
-        } else {
-            self.state_internal = .failed;
-        }
-        self.stop_requested.store(true, .monotonic);
-        self.cond.broadcast();
-    }
+    // readLoopThread replaced by library readLoopInNewThread(handler)
 
     fn handleText(self: *RelayClient, data: []const u8) void {
         const parsed = self.parser.parseText(data) catch |err| {
@@ -308,19 +354,6 @@ pub const RelayClient = struct {
         log.debug("ignoring binary frame", .{});
     }
 
-    fn handlePing(self: *RelayClient, payload: []const u8) void {
-        if (self.ws_client) |*client| {
-            const buffer = self.allocator.dupe(u8, payload) catch {
-                log.warn("failed to reply to ping: out of memory", .{});
-                return;
-            };
-            defer self.allocator.free(buffer);
-            client.writePong(buffer) catch |err| {
-                log.warn("failed to send pong: {}", .{err});
-            };
-        }
-    }
-
     fn handleClose(self: *RelayClient) void {
         self.state_internal = .closed;
         self.stop_requested.store(true, .monotonic);
@@ -331,22 +364,13 @@ pub const RelayClient = struct {
         parent: *RelayClient,
 
         pub fn serverMessage(self: *ConnectionHandler, data: []u8, tpe: websocket.MessageTextType) !void {
-            defer self.parent.allocator.free(data);
             switch (tpe) {
                 .text => self.parent.handleText(data),
                 .binary => self.parent.handleBinary(data),
             }
         }
 
-        pub fn serverPing(self: *ConnectionHandler, data: []u8) !void {
-            defer self.parent.allocator.free(data);
-            self.parent.handlePing(data);
-        }
-
-        pub fn serverClose(self: *ConnectionHandler, data: []u8) !void {
-            defer self.parent.allocator.free(data);
-            self.parent.handleClose();
-        }
+        // Omit serverPing/serverClose so the library handles ping/pong/close
 
         pub fn close(self: *ConnectionHandler) void {
             self.parent.handleClose();

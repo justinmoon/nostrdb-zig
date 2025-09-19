@@ -6,6 +6,7 @@ const timeline = @import("timeline");
 const ndb = @import("ndb");
 
 const log = std.log.scoped(.ingest);
+pub const diag = @import("ingdiag");
 
 pub const Allocator = std.mem.Allocator;
 
@@ -113,6 +114,112 @@ pub const Pipeline = struct {
         if (active != 0) return error.CompletionTimeout;
     }
 
+    pub fn runEx(
+        self: *Pipeline,
+        relays: []const []const u8,
+        diag_states: ?[]diag.RelayDiag,
+        job_start_ms: u64,
+        origin: ?[]const u8,
+    ) PipelineError!bool {
+        if (relays.len == 0) return false;
+
+        const follows = try self.captureFollows();
+        defer self.allocator.free(follows);
+        if (follows.len == 0) return error.NoFollowSet;
+
+        var follow_lookup = try SelfFollowSet.init(self.allocator, follows);
+        defer follow_lookup.deinit();
+
+        const initial_since = self.initialSince();
+        const filters = try self.buildFilters(follows, initial_since);
+        defer self.freeFilters(filters);
+
+        var clients = std.array_list.Managed(ClientState).init(self.allocator);
+        defer clients.deinit();
+
+        var connected: usize = 0;
+        for (relays, 0..) |relay_url, idx| {
+            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            if (diag_states) |ds| {
+                ds[idx].attempts += 1;
+                ds[idx].last_change_ms = if (job_start_ms == 0) 0 else now_ms - job_start_ms;
+            }
+            log.info("ingest: connecting to {s}", .{relay_url});
+            var client = net.RelayClient.init(.{ .allocator = self.allocator, .url = relay_url, .origin = origin }) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("ingest: init failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                continue;
+            };
+            errdefer client.deinit();
+
+            client.connect(null) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("ingest: connect failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                client.deinit();
+                continue;
+            };
+
+            const sub_id = try proto.nextSubId(self.allocator);
+            errdefer self.allocator.free(sub_id);
+            const req = try buildRequest(self.allocator, sub_id, filters);
+            defer self.allocator.free(req);
+            client.sendText(req) catch |err| {
+                if (diag_states) |ds| ds[idx].last_error = self.allocator.dupe(u8, @errorName(err)) catch null;
+                log.warn("ingest: send REQ failed url={s} err={s}", .{ relay_url, @errorName(err) });
+                client.close();
+                client.deinit();
+                continue;
+            };
+            log.info("ingest: REQ sent to {s}", .{relay_url});
+
+            try clients.append(.{ .client = client, .sub_id = sub_id, .phase = .initial, .relay_index = idx });
+            connected += 1;
+        }
+
+        if (connected == 0) return error.CompletionTimeout;
+
+        var active = connected;
+        var idle_loops: usize = 0;
+        var finished_any = false;
+
+        while (active > 0) {
+            var progressed = false;
+            var i: usize = 0;
+            while (i < clients.items.len) : (i += 1) {
+                var entry = &clients.items[i];
+                if (entry.phase == .finished) continue;
+                const msg_opt = entry.client.nextMessage(2_000) catch |err| switch (err) {
+                    error.Timeout => null,
+                };
+                if (msg_opt) |msg| {
+                    progressed = true;
+                    try self.handleMessageEx(msg, &follow_lookup, entry, diag_states, job_start_ms, &finished_any);
+                }
+                if (entry.phase == .finished) {
+                    active -= 1;
+                }
+            }
+
+            if (finished_any) break;
+
+            if (!progressed) {
+                idle_loops += 1;
+                if (idle_loops >= 3) break;
+            } else {
+                idle_loops = 0;
+            }
+        }
+
+        // cleanup
+        var j: usize = 0;
+        while (j < clients.items.len) : (j += 1) {
+            clients.items[j].deinit(self.allocator);
+        }
+
+        if (!finished_any) return error.CompletionTimeout;
+        return true;
+    }
+
     fn handleMessage(
         self: *Pipeline,
         msg: net.RelayMessage,
@@ -147,6 +254,56 @@ pub const Pipeline = struct {
             .eose => |eose| {
                 if (!std.mem.eql(u8, eose.subId(), client.sub_id)) return;
                 try self.onEose(client, follow_lookup);
+            },
+            .notice => |notice| {
+                log.info("relay notice: {s}", .{notice.text()});
+            },
+            else => {},
+        }
+    }
+
+    fn handleMessageEx(
+        self: *Pipeline,
+        msg: net.RelayMessage,
+        follow_lookup: *SelfFollowSet,
+        client: *ClientState,
+        diag_states: ?[]diag.RelayDiag,
+        job_start_ms: u64,
+        finished_any: *bool,
+    ) PipelineError!void {
+        var owned = msg;
+        defer owned.deinit(self.allocator);
+
+        switch (owned) {
+            .event => |event| {
+                if (!std.mem.eql(u8, event.subId(), client.sub_id)) return;
+                self.db.processEvent(event.raw()) catch |err| {
+                    log.warn("ndb process event failed: {}", .{err});
+                    return;
+                };
+                const meta = try parseEventMeta(self.allocator, event.eventJson());
+                const entry = timeline.TimelineEntry{
+                    .event_id = meta.id,
+                    .author = meta.author,
+                    .created_at = meta.created_at,
+                };
+                timeline.insertEvent(self.timeline_store, self.npub, entry, event.eventJson()) catch |err| {
+                    log.warn("timeline insert failed: {}", .{err});
+                };
+            },
+            .eose => |eose| {
+                if (!std.mem.eql(u8, eose.subId(), client.sub_id)) return;
+                const now_ms: u64 = @intCast(std.time.milliTimestamp());
+                if (diag_states) |ds| {
+                    if (client.relay_index < ds.len) {
+                        ds[client.relay_index].eose = true;
+                        ds[client.relay_index].last_change_ms = if (job_start_ms == 0) 0 else now_ms - job_start_ms;
+                    }
+                }
+                try self.onEose(client, follow_lookup);
+                if (client.phase == .finished) {
+                    finished_any.* = true;
+                }
             },
             .notice => |notice| {
                 log.info("relay notice: {s}", .{notice.text()});
@@ -230,6 +387,7 @@ const ClientState = struct {
     client: net.RelayClient,
     sub_id: []u8,
     phase: ClientPhase = .initial,
+    relay_index: usize = 0,
 
     fn init(
         allocator: Allocator,
@@ -245,11 +403,12 @@ const ClientState = struct {
         errdefer allocator.free(sub_id);
 
         const req = try buildRequest(allocator, sub_id, filters);
+        log.info("ingest REQ to {s}: {s}", .{ relay_url, req });
         defer allocator.free(req);
 
         try client.sendText(req);
 
-        return .{ .client = client, .sub_id = sub_id, .phase = .initial };
+        return .{ .client = client, .sub_id = sub_id, .phase = .initial, .relay_index = 0 };
     }
 
     fn resubscribe(
@@ -258,12 +417,12 @@ const ClientState = struct {
         filters: [][:0]const u8,
     ) !void {
         const req = try buildRequest(allocator, self.sub_id, filters);
+        log.info("ingest RESUB to {s}: {s}", .{ self.client.host, req });
         defer allocator.free(req);
         try self.client.sendText(req);
     }
 
     fn deinit(self: *ClientState, allocator: Allocator) void {
-        self.client.close();
         self.client.deinit();
         allocator.free(self.sub_id);
     }

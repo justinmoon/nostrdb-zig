@@ -1,0 +1,28 @@
+info: nostrdb SSR demo listening on http://0.0.0.0:8085 (db: /var/folders/19/h_y32l8s1lxfrpxctd1673p00000gn/T/tmp.qvIilC2otr, limit: 100)
+info: auto-starting ingestion for npub (empty timeline)
+info: ingest_svc: started job (relays=1)
+info: ingest_svc: job start relays=wss://relay.damus.io
+info: ingest_svc: contacts stage (elapsed=0ms)
+info(contacts): contacts: connecting to wss://relay.damus.io
+info(contacts): contacts: REQ sent to wss://relay.damus.io
+thread 2038030 panic: start index 6192878256 is larger than end index 4096
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/proto.zig:149:36: 0x1008204f7 in read (ssr-demo)
+            var buf = self.buf.data[start..pos];
+                                   ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:246:56: 0x1008229af in read (ssr-demo)
+            const has_more, const message = reader.read() catch |err| {
+                                                       ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:201:38: 0x1008230df in readLoop__anon_375318 (ssr-demo)
+            const message = self.read() catch |err| switch (err) {
+                                     ^
+/Users/justin/.cache/zig/p/websocket-0.1.0-ZPISdZJxAwAt6Ys_JpoHQQV3NpWCof_N9Jg-Ul2g7OoV/src/client/client.zig:278:22: 0x1007ea27b in readLoopOwnedThread__anon_351999 (ssr-demo)
+        self.readLoop(h) catch {};
+                     ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Thread.zig:510:13: 0x1007ba96f in callFn__anon_43553 (ssr-demo)
+            @call(.auto, f, args);
+            ^
+/nix/store/4y9lx4a29dshij997i4i7j2kxwqk2zs2-zig-0.15.1/lib/std/Thread.zig:782:30: 0x100762a27 in entryFn (ssr-demo)
+                return callFn(f, args_ptr.*);
+                             ^
+???:?:?: 0x19df33c0b in ??? (libsystem_pthread.dylib)
+???:?:?: 0x19df2eb7f in ??? (libsystem_pthread.dylib)
