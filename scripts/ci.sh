@@ -24,14 +24,32 @@ export AR="${AR:-$(command -v ar || true)}"
 
 # On Linux, help Zig find a basic libc if necessary
 if [[ "${OSTYPE:-}" == linux* ]]; then
+  # Derive libc include/crt/gcc dirs from the active C toolchain
+  crt1=$(cc -print-file-name=crt1.o 2>/dev/null || true)
+  crt_dir="${crt1%/*}"
+
+  # Extract include search paths and pick the first that contains glibc's bits headers
+  mapfile -t incs < <(echo | cc -x c -E -Wp,-v - 2>&1 | awk '/#include <...> search starts here:/{flag=1;next} /End of search list/{flag=0} flag {gsub(/^ +/,"");print}')
+  include_dir=""
+  for d in "${incs[@]}"; do
+    if [[ -f "$d/bits/libc-header-start.h" ]]; then include_dir="$d"; break; fi
+    if [[ -f "$d/x86_64-linux-gnu/bits/libc-header-start.h" ]]; then include_dir="$d/x86_64-linux-gnu"; break; fi
+  done
+  # Fallbacks if not found
+  if [[ -z "$include_dir" ]]; then include_dir="/usr/include"; fi
+  sys_include_dir="$include_dir"
+
+  gcc_lib=$(cc -print-libgcc-file-name 2>/dev/null || true)
+  gcc_dir="${gcc_lib%/*}"
+
   export ZIG_LIBC_TXT=$(mktemp)
-  cat > "$ZIG_LIBC_TXT" << 'LIBC_EOF'
-include_dir=/usr/include
-sys_include_dir=/usr/include
-crt_dir=/usr/lib
+  cat > "$ZIG_LIBC_TXT" << LIBC_EOF
+include_dir=$include_dir
+sys_include_dir=$sys_include_dir
+crt_dir=${crt_dir:-/usr/lib}
 msvc_lib_dir=
 kernel32_lib_dir=
-gcc_dir=
+gcc_dir=$gcc_dir
 LIBC_EOF
   echo "Created libc config at $ZIG_LIBC_TXT"
   # Ensure zig picks this up during build/cc
