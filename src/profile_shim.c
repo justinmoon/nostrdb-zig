@@ -98,7 +98,8 @@ int ndb_profile_record_is_valid(const void* record, size_t len) {
     
     // Check root offset is within bounds
     // Flatbuffers start with a 4-byte offset to the root table
-    uint32_t root_offset = *(uint32_t*)buffer;
+    uint32_t root_offset;
+    memcpy(&root_offset, buffer, sizeof(root_offset));
     if (root_offset + 4 > len) return 0;
     
     // The root table is at buffer + root_offset + 4
@@ -108,14 +109,16 @@ int ndb_profile_record_is_valid(const void* record, size_t len) {
     
     // Check vtable offset (first field of table)
     // This is a signed offset pointing backwards to the vtable
-    int32_t vtable_soffset = *(int32_t*)root_table;
+    int32_t vtable_soffset;
+    memcpy(&vtable_soffset, root_table, sizeof(vtable_soffset));
     if (vtable_soffset >= 0) return 0;  // Must be negative (points backwards)
     
     const uint8_t* vtable = root_table - vtable_soffset;
     if (vtable < buffer || (size_t)(vtable - buffer) >= len) return 0;
     
     // Check vtable size (first field of vtable)
-    uint16_t vtable_size = *(uint16_t*)vtable;
+    uint16_t vtable_size;
+    memcpy(&vtable_size, vtable, sizeof(vtable_size));
     if (vtable_size < 4) return 0;  // Min vtable size (size + object_size)
     if ((size_t)(vtable - buffer) + vtable_size > len) return 0;
     
