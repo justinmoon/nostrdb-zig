@@ -66,8 +66,8 @@ else
     log "skipping import (data.mdb already present)"
 fi
 
-log "building ssr-demo"
-(cd "$ROOT" && zig build ssr-demo)
+log "building mega"
+(cd "$ROOT" && zig build mega)
 
 log "starting server"
-exec "$ROOT/zig-out/bin/ssr-demo" --db-path "$DB_DIR" "$@"
+exec "$ROOT/zig-out/bin/mega" --db-path "$DB_DIR" "$@"

@@ -228,36 +228,7 @@ pub fn build(b: *std.Build) void {
     const megalith_step = b.step("megalith", "Build the Megalith CLI");
     megalith_step.dependOn(&install_megalith.step);
 
-    const ssr_demo = b.addExecutable(.{
-        .name = "ssr-demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("mega/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    ssr_demo.root_module.addImport("ndb", ndb_module);
-    ssr_demo.root_module.addImport("proto", proto_module);
-    if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .aarch64_be) {
-        ssr_demo.root_module.addIncludePath(b.path("src/override"));
-    }
-    ssr_demo.root_module.addIncludePath(b.path("nostrdb/src"));
-    ssr_demo.root_module.addIncludePath(b.path("nostrdb/ccan"));
-    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/lmdb"));
-    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/flatcc/include"));
-    ssr_demo.root_module.addIncludePath(b.path("nostrdb/deps/secp256k1/include"));
-    if (target.result.os.tag == .macos) {
-        configureAppleSdk(b, ssr_demo);
-        ssr_demo.linkFramework("Security");
-    }
-    if (target.result.os.tag == .linux) {
-        ssr_demo.linkLibC();
-        ssr_demo.linkSystemLibrary("pthread");
-    }
-    ssr_demo.linkLibrary(lib);
-    const install_ssr = b.addInstallArtifact(ssr_demo, .{});
-    const ssr_step = b.step("ssr-demo", "Build the SSR timeline demo server");
-    ssr_step.dependOn(&install_ssr.step);
+    // ssr-demo target removed; use `zig build mega` instead
 
     // New: build the same server under the name "mega"
     const mega_exe = b.addExecutable(.{
