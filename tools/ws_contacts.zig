@@ -70,7 +70,7 @@ pub fn main() !void {
     hpos += copy(&header_buf, hpos, origin);
     hpos += copy(&header_buf, hpos, "\r\n");
 
-    std.log.info("handshake {s}://{s}:{d}{s} origin={s}", .{ if (parts.use_tls) "wss" else "ws", parts.host, parts.port, parts.path, origin });
+    std.debug.print("handshake {s}://{s}:{d}{s} origin={s}\n", .{ if (parts.use_tls) "wss" else "ws", parts.host, parts.port, parts.path, origin });
     try client.handshake(parts.path, .{ .timeout_ms = timeout_ms, .headers = header_buf[0..hpos] });
 
     // Resolve author hex
@@ -120,7 +120,7 @@ pub fn main() !void {
         }
     }
 
-    std.log.info("follows captured: {d}", .{follows.items.len});
+    std.debug.print("follows captured: {d}\n", .{follows.items.len});
     if (follows.items.len == 0) {
         std.log.warn("no follows; exiting", .{});
         return;
@@ -180,7 +180,7 @@ pub fn main() !void {
         }
     }
 
-    std.log.info("downloaded posts: {d}", .{printed});
+    std.debug.print("downloaded posts: {d}\n", .{printed});
 }
 
 fn usage() !void {
@@ -297,9 +297,11 @@ fn printPostLine(allocator: Allocator, frame: []const u8, names: *std.StringHash
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame[start..frame.len - 1], .{});
     defer parsed.deinit();
     const obj = parsed.value.object;
+    const id_v = obj.get("id") orelse return false;
     const pk_v = obj.get("pubkey") orelse return false;
     const content_v = obj.get("content") orelse return false;
-    if (pk_v != .string or content_v != .string) return false;
+    if (id_v != .string or pk_v != .string or content_v != .string) return false;
+    const ev_id = id_v.string;
     const pk = pk_v.string;
     const content = content_v.string;
     const display = blk: {
@@ -307,7 +309,9 @@ fn printPostLine(allocator: Allocator, frame: []const u8, names: *std.StringHash
         // fallback: first 8 of pubkey
         break :blk pk[0..@min(pk.len, 8)];
     };
-    std.log.info("{s}: {s}", .{ display, content });
+    std.debug.print("{s}: {s}\n", .{ display, content });
+    // Print Primal link with hex event id for quick sanity checking
+    std.debug.print("https://primal.net/e/{s}\n\n", .{ev_id});
     return true;
 }
 
