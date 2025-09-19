@@ -87,14 +87,14 @@ pub fn build(b: *std.Build) void {
                 "nostrdb/src/bolt11/amount.c",
                 "nostrdb/src/bolt11/hash_u5.c",
             },
-        .flags = &.{
-            "-Wno-sign-compare",
-            "-Wno-misleading-indentation",
-            "-Wno-unused-function",
-            "-Wno-unused-parameter",
-            "-U_FORTIFY_SOURCE",
-        },
-    });
+            .flags = &.{
+                "-Wno-sign-compare",
+                "-Wno-misleading-indentation",
+                "-Wno-unused-function",
+                "-Wno-unused-parameter",
+                "-U_FORTIFY_SOURCE",
+            },
+        });
     }
 
     // secp256k1 sources and defines
